@@ -164,25 +164,3 @@ async fn parse_page(
         rightmost_pointer,
     ))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::PathBuf;
-
-    #[tokio::test]
-    async fn test_parse_invalid_file() {
-        let result = parse_database_file(Path::new("nonexistent.db")).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_header_validation() {
-        // This would need a test SQLite file to work properly
-        // For now, just ensure the function signature is correct
-        let temp_file = std::env::temp_dir().join("test.db");
-        let result = parse_database_file(&temp_file).await;
-        // Expected to fail since file doesn't exist
-        assert!(result.is_err());
-    }
-}

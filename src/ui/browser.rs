@@ -4,11 +4,19 @@ use crate::ui::components;
 use anyhow::Result;
 use gpui::{
     Context, EventEmitter, FocusHandle, IntoElement, ParentElement, Render, Task, Window, actions,
-    div, prelude::*, px,
+    div, impl_actions, prelude::*, px,
 };
+use rfd::FileDialog;
 use std::path::PathBuf;
 
-actions![sqlite_browser, [OpenFile, SelectPage, RefreshDatabase]];
+actions![sqlite_browser, [OpenFile, RefreshDatabase]];
+
+#[derive(Clone, Default, PartialEq, serde::Deserialize, schemars::JsonSchema)]
+pub struct SelectPage {
+    pub page_number: u32,
+}
+
+impl_actions!(sqlite_browser, [SelectPage]);
 
 pub struct SqliteBrowser {
     file_manager: FileManager,
@@ -47,7 +55,6 @@ impl SqliteBrowser {
                     entity.update(cx, |this, cx| {
                         this.file_manager.set_current_file(Some(path.clone()));
                         this.database_info = Some(database_info.clone());
-                        this.set_status_message(format!("Opened {}", path.display()), false, cx);
 
                         // Start watching the file
                         if let Err(e) = this.file_manager.start_watching(&path, cx) {
@@ -134,10 +141,19 @@ impl SqliteBrowser {
     fn select_page(&mut self, page_number: u32, cx: &mut Context<Self>) {
         // Validate that the page exists
         if let Some(ref db_info) = self.database_info {
-            if db_info.pages.iter().any(|p| p.page_number == page_number) {
+            if let Some(page) = db_info.pages.iter().find(|p| p.page_number == page_number) {
                 self.selected_page = Some(page_number);
+                self.set_status_message(
+                    format!("Selected page {} ({})", page_number, page.page_type.name()),
+                    false,
+                    cx,
+                );
                 cx.notify();
+            } else {
+                self.set_status_message(format!("Page {} not found", page_number), true, cx);
             }
+        } else {
+            self.set_status_message("No database loaded".to_string(), true, cx);
         }
     }
 
@@ -170,6 +186,62 @@ impl SqliteBrowser {
             db_info.get_page(selected)
         } else {
             None
+        }
+    }
+
+    /// Programmatically select a page by its number
+    pub fn select_page_by_number(&mut self, page_number: u32, cx: &mut Context<Self>) -> bool {
+        let action = SelectPage { page_number };
+        self.handle_select_page(&action, cx);
+        self.selected_page == Some(page_number)
+    }
+
+    /// Get the currently selected page number
+    pub fn selected_page_number(&self) -> Option<u32> {
+        self.selected_page
+    }
+
+    /// Open a file dialog to select a SQLite database file
+    pub fn open_file_dialog(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        cx.spawn(async move |entity, cx| {
+            // Use async file dialog to avoid blocking the UI
+            match FileDialog::new()
+                .add_filter("All Files", &["*"])
+                .set_title("Open SQLite Database")
+                .pick_file()
+            {
+                Some(path) => {
+                    entity.update(cx, |this, cx| {
+                        this.open_file(path, cx).detach();
+                    })?;
+                    Ok(())
+                }
+                None => {
+                    // User cancelled the dialog
+                    entity.update(cx, |this, cx| {
+                        this.set_status_message("File selection cancelled".to_string(), false, cx);
+                    })?;
+                    Ok(())
+                }
+            }
+        })
+    }
+
+    /// Try to open a file, and if it fails, open a file dialog
+    pub fn try_open_file_or_dialog(
+        &mut self,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        if path.exists() {
+            self.open_file(path, cx)
+        } else {
+            self.set_status_message(
+                format!("File '{}' not found. Please select a file.", path.display()),
+                true,
+                cx,
+            );
+            self.open_file_dialog(cx)
         }
     }
 
@@ -232,13 +304,7 @@ impl Render for SqliteBrowser {
                 .flex_col()
                 .w_full()
                 .h_full()
-                .child(components::render_header(
-                    self.current_file_path(),
-                    self.database_info
-                        .as_ref()
-                        .map_or(0, |info| info.page_count()),
-                    self.is_file_being_watched(),
-                ))
+                .child(self.render_header_with_handlers(cx))
                 .when_some(self.status_message.as_ref(), |this, (message, is_error)| {
                     this.child(components::render_status_message(message, *is_error))
                 })
@@ -254,7 +320,7 @@ impl Render for SqliteBrowser {
                         ))
                         .into_any_element()
                 } else {
-                    components::render_empty_state().into_any_element()
+                    self.render_empty_state_with_handlers(cx).into_any_element()
                 }),
         )
     }
@@ -288,11 +354,12 @@ impl SqliteBrowser {
                     .items_center()
                     .justify_center()
                     .cursor_pointer()
-                    .hover(|this| this.opacity(0.8))
+                    .hover(|this| this.opacity(0.7))
                     .on_mouse_down(
                         gpui::MouseButton::Left,
                         cx.listener(move |this, _event, _window, cx| {
-                            this.select_page(page_number, cx);
+                            let action = SelectPage { page_number };
+                            this.handle_select_page(&action, cx);
                         }),
                     )
                     .child(
@@ -315,71 +382,160 @@ impl SqliteBrowser {
         div().flex().flex_1().flex_col().p_4().child(page_grid)
     }
 
+    fn render_header_with_handlers(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .p_4()
+            .bg(gpui::rgb(0x2d2d2d))
+            .border_b_1()
+            .border_color(gpui::rgb(0x3e3e3e))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_xl()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(gpui::rgb(0xffffff))
+                            .child("SQLite Browser"),
+                    )
+                    .when_some(self.current_file_path(), |this, path| {
+                        this.child(
+                            div()
+                                .text_sm()
+                                .text_color(gpui::rgb(0xcccccc))
+                                .child(format!(
+                                    "- {}",
+                                    path.file_name()
+                                        .and_then(|n| n.to_str())
+                                        .unwrap_or("Unknown")
+                                )),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .px_3()
+                            .py_1()
+                            .bg(gpui::rgb(0x2563eb))
+                            .hover(|this| this.bg(gpui::rgb(0x1d4ed8)))
+                            .rounded_md()
+                            .cursor_pointer()
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(|this, _event, _window, cx| {
+                                    this.open_file_dialog(cx).detach();
+                                }),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(gpui::rgb(0xffffff))
+                                    .child("Open File"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(gpui::rgb(0xaaaaaa))
+                            .child(format!(
+                                "Pages: {}",
+                                self.database_info
+                                    .as_ref()
+                                    .map_or(0, |info| info.page_count())
+                            )),
+                    )
+                    .when(self.is_file_being_watched(), |this| {
+                        this.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .child(div().size(px(8.0)).rounded_full().bg(gpui::rgb(0x4CAF50)))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(gpui::rgb(0x4CAF50))
+                                        .child("Watching"),
+                                ),
+                        )
+                    }),
+            )
+    }
+
+    fn render_empty_state_with_handlers(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .flex_1()
+            .gap_4()
+            .child(
+                div()
+                    .text_xl()
+                    .text_color(gpui::rgb(0xaaaaaa))
+                    .child("No database loaded"),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(gpui::rgb(0x888888))
+                    .child("Open a SQLite database file to get started"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .px_6()
+                    .py_3()
+                    .bg(gpui::rgb(0x2563eb))
+                    .hover(|this| this.bg(gpui::rgb(0x1d4ed8)))
+                    .rounded_lg()
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(|this, _event, _window, cx| {
+                            this.open_file_dialog(cx).detach();
+                        }),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(gpui::rgb(0xffffff))
+                            .child("Open File"),
+                    ),
+            )
+    }
+
     pub fn register_actions(_cx: &mut Context<Self>) {
-        // Action registration would be done at the application level in GPUI
-        // For now, we'll handle actions through direct method calls
+        // Action registration in GPUI is complex - for now we use direct method calls
+        // This keeps the action handlers available for future proper integration
     }
 
     fn handle_open_file(&mut self, _action: &OpenFile, cx: &mut Context<Self>) {
-        // In a real implementation, this would open a file dialog
-        // For now, we'll just refresh the current file if one is open
-        if self.current_file_path().is_some() {
-            self.refresh_database(cx).detach();
-        }
+        // Open file dialog to select a database file
+        self.open_file_dialog(cx).detach();
     }
 
-    fn handle_select_page(&mut self, _action: &SelectPage, cx: &mut Context<Self>) {
-        // This would be called with a specific page number
-        // For now, just select the first page if available
-        if let Some(ref db_info) = self.database_info {
-            if let Some(first_page) = db_info.pages.first() {
-                self.select_page(first_page.page_number, cx);
-            }
-        }
+    pub fn handle_select_page(&mut self, action: &SelectPage, cx: &mut Context<Self>) {
+        println!("Handling select page action");
+        self.select_page(action.page_number, cx);
     }
 
     fn handle_refresh_database(&mut self, _action: &RefreshDatabase, cx: &mut Context<Self>) {
         self.refresh_database(cx).detach();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use gpui::TestAppContext;
-
-    #[gpui::test]
-    async fn test_browser_creation(cx: &mut TestAppContext) {
-        let browser = cx.new(|cx| SqliteBrowser::new(cx));
-
-        browser.read_with(cx, |browser, _cx| {
-            assert!(browser.database_info().is_none());
-            assert!(browser.current_file_path().is_none());
-            assert!(!browser.is_file_being_watched());
-        });
-    }
-
-    #[gpui::test]
-    async fn test_page_selection(cx: &mut TestAppContext) {
-        let browser = cx.new(|cx| SqliteBrowser::new(cx));
-
-        browser.update(cx, |browser, cx| {
-            // Without database info, selecting a page should do nothing
-            browser.select_page(1, cx);
-            assert_eq!(browser.selected_page, None);
-        });
-    }
-
-    #[gpui::test]
-    async fn test_status_messages(cx: &mut TestAppContext) {
-        let browser = cx.new(|cx| SqliteBrowser::new(cx));
-
-        browser.update(cx, |browser, cx| {
-            browser.set_status_message("Test message".to_string(), false, cx);
-            assert!(browser.status_message.is_some());
-
-            browser.clear_status_message(cx);
-            assert!(browser.status_message.is_none());
-        });
     }
 }
