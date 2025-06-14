@@ -1,5 +1,5 @@
-use gpui::{IntoElement, ParentElement, InteractiveElement, prelude::*, div, px, rgb};
 use crate::models::{DatabaseHeader, DatabaseInfo, PageInfo};
+use gpui::{InteractiveElement, IntoElement, ParentElement, div, prelude::*, px, rgb};
 
 pub fn render_header(
     database_path: Option<&std::path::Path>,
@@ -44,7 +44,7 @@ pub fn render_header(
                     div()
                         .text_sm()
                         .text_color(rgb(0xaaaaaa))
-                        .child(format!("Pages: {}", page_count))
+                        .child(format!("Pages: {}", page_count)),
                 )
                 .when(is_watching, |this| {
                     this.child(
@@ -52,52 +52,35 @@ pub fn render_header(
                             .flex()
                             .items_center()
                             .gap_1()
-                            .child(
-                                div()
-                                    .size(px(8.0))
-                                    .rounded_full()
-                                    .bg(rgb(0x4CAF50))
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(0x4CAF50))
-                                    .child("Watching")
-                            )
+                            .child(div().size(px(8.0)).rounded_full().bg(rgb(0x4CAF50)))
+                            .child(div().text_xs().text_color(rgb(0x4CAF50)).child("Watching")),
                     )
-                })
+                }),
         )
 }
 
-pub fn render_page_grid(
-    pages: &[PageInfo],
-    selected_page: Option<u32>,
-) -> impl IntoElement {
+pub fn render_page_grid(pages: &[PageInfo], selected_page: Option<u32>) -> impl IntoElement {
     let mut page_grid = div().flex().flex_wrap().gap_2();
 
     for page in pages {
         page_grid = page_grid.child(render_page_square(page, selected_page));
     }
 
-    div()
-        .flex()
-        .flex_1()
-        .flex_col()
-        .p_4()
-        .child(page_grid)
+    div().flex().flex_1().flex_col().p_4().child(page_grid)
 }
 
-pub fn render_page_square(
-    page: &PageInfo,
-    selected_page: Option<u32>,
-) -> impl IntoElement {
+pub fn render_page_square(page: &PageInfo, selected_page: Option<u32>) -> impl IntoElement {
     let is_selected = selected_page == Some(page.page_number);
 
     div()
         .size(px(80.0))
         .bg(page.page_type.color())
-        .when(is_selected, |this| this.border_2().border_color(rgb(0xffffff)))
-        .when(!is_selected, |this| this.border_1().border_color(rgb(0x555555)))
+        .when(is_selected, |this| {
+            this.border_2().border_color(rgb(0xffffff))
+        })
+        .when(!is_selected, |this| {
+            this.border_1().border_color(rgb(0x555555))
+        })
         .rounded_md()
         .flex()
         .flex_col()
@@ -111,14 +94,14 @@ pub fn render_page_square(
                 .text_xs()
                 .font_weight(gpui::FontWeight::BOLD)
                 .text_color(rgb(0xffffff))
-                .child(format!("{}", page.page_number))
+                .child(format!("{}", page.page_number)),
         )
         .child(
             div()
                 .text_xs()
                 .text_color(rgb(0xffffff))
                 .opacity(0.8)
-                .child(page.page_type.short_name())
+                .child(page.page_type.short_name()),
         )
 }
 
@@ -135,39 +118,37 @@ pub fn render_sidebar(
         .flex()
         .flex_col()
         .child(
-            div()
-                .p_4()
-                .border_b_1()
-                .border_color(rgb(0x3e3e3e))
-                .child(
-                    div()
-                        .text_lg()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(rgb(0xffffff))
-                        .child("Page Details")
-                )
+            div().p_4().border_b_1().border_color(rgb(0x3e3e3e)).child(
+                div()
+                    .text_lg()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(rgb(0xffffff))
+                    .child("Page Details"),
+            ),
         )
         .child(
             div()
                 .flex_1()
                 .p_4()
-                .child(
-                    if let Some(selected_page_num) = selected_page {
-                        if let Some(page) = pages.iter().find(|p| p.page_number == selected_page_num) {
-                            render_page_details(page, database_info.map(|info| info.header.actual_page_size())).into_any_element()
-                        } else {
-                            div()
-                                .text_color(rgb(0xaaaaaa))
-                                .child("Page not found")
-                                .into_any_element()
-                        }
+                .child(if let Some(selected_page_num) = selected_page {
+                    if let Some(page) = pages.iter().find(|p| p.page_number == selected_page_num) {
+                        render_page_details(
+                            page,
+                            database_info.map(|info| info.header.actual_page_size()),
+                        )
+                        .into_any_element()
                     } else {
                         div()
                             .text_color(rgb(0xaaaaaa))
-                            .child("Select a page to view details")
+                            .child("Page not found")
                             .into_any_element()
                     }
-                )
+                } else {
+                    div()
+                        .text_color(rgb(0xaaaaaa))
+                        .child("Select a page to view details")
+                        .into_any_element()
+                }),
         )
         .when_some(database_info, |this, info| {
             this.child(
@@ -175,7 +156,7 @@ pub fn render_sidebar(
                     .border_t_1()
                     .border_color(rgb(0x3e3e3e))
                     .p_4()
-                    .child(render_database_info(&info.header))
+                    .child(render_database_info(&info.header)),
             )
         })
 }
@@ -190,44 +171,68 @@ pub fn render_page_details(page: &PageInfo, page_size: Option<usize>) -> impl In
             div()
                 .flex()
                 .justify_between()
-                .child(div().font_weight(gpui::FontWeight::BOLD).child("Page Number:"))
-                .child(div().child(format!("{}", page.page_number)))
+                .child(
+                    div()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child("Page Number:"),
+                )
+                .child(div().child(format!("{}", page.page_number))),
         )
         .child(
             div()
                 .flex()
                 .justify_between()
-                .child(div().font_weight(gpui::FontWeight::BOLD).child("Page Type:"))
-                .child(div().child(page.page_type.name()))
+                .child(
+                    div()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child("Page Type:"),
+                )
+                .child(div().child(page.page_type.name())),
         )
         .child(
             div()
                 .flex()
                 .justify_between()
-                .child(div().font_weight(gpui::FontWeight::BOLD).child("Cell Count:"))
-                .child(div().child(format!("{}", page.cell_count)))
+                .child(
+                    div()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child("Cell Count:"),
+                )
+                .child(div().child(format!("{}", page.cell_count))),
         )
         .child(
             div()
                 .flex()
                 .justify_between()
-                .child(div().font_weight(gpui::FontWeight::BOLD).child("Free Space:"))
-                .child(div().child(format!("{} bytes", page.free_space)))
+                .child(
+                    div()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child("Free Space:"),
+                )
+                .child(div().child(format!("{} bytes", page.free_space))),
         )
         .child(
             div()
                 .flex()
                 .justify_between()
-                .child(div().font_weight(gpui::FontWeight::BOLD).child("Fragmented:"))
-                .child(div().child(format!("{} bytes", page.fragmented_bytes)))
+                .child(
+                    div()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child("Fragmented:"),
+                )
+                .child(div().child(format!("{} bytes", page.fragmented_bytes))),
         )
         .when_some(page.rightmost_pointer, |this, ptr| {
             this.child(
                 div()
                     .flex()
                     .justify_between()
-                    .child(div().font_weight(gpui::FontWeight::BOLD).child("Right Pointer:"))
-                    .child(div().child(format!("{}", ptr)))
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child("Right Pointer:"),
+                    )
+                    .child(div().child(format!("{}", ptr))),
             )
         })
         .when_some(page_size, |this, size| {
@@ -235,8 +240,12 @@ pub fn render_page_details(page: &PageInfo, page_size: Option<usize>) -> impl In
                 div()
                     .flex()
                     .justify_between()
-                    .child(div().font_weight(gpui::FontWeight::BOLD).child("Utilization:"))
-                    .child(div().child(format!("{:.1}%", page.utilization_percent(size))))
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child("Utilization:"),
+                    )
+                    .child(div().child(format!("{:.1}%", page.utilization_percent(size)))),
             )
         })
 }
@@ -251,7 +260,7 @@ pub fn render_database_info(header: &DatabaseHeader) -> impl IntoElement {
                 .text_sm()
                 .font_weight(gpui::FontWeight::BOLD)
                 .text_color(rgb(0xffffff))
-                .child("Database Info")
+                .child("Database Info"),
         )
         .child(
             div()
@@ -269,7 +278,7 @@ pub fn render_database_info(header: &DatabaseHeader) -> impl IntoElement {
                 .flex()
                 .justify_between()
                 .child("Total Pages:")
-                .child(format!("{}", header.database_size_pages))
+                .child(format!("{}", header.database_size_pages)),
         )
         .child(
             div()
@@ -278,7 +287,7 @@ pub fn render_database_info(header: &DatabaseHeader) -> impl IntoElement {
                 .flex()
                 .justify_between()
                 .child("Schema Version:")
-                .child(format!("{}", header.schema_format_number))
+                .child(format!("{}", header.schema_format_number)),
         )
         .child(
             div()
@@ -287,7 +296,7 @@ pub fn render_database_info(header: &DatabaseHeader) -> impl IntoElement {
                 .flex()
                 .justify_between()
                 .child("SQLite Version:")
-                .child(format!("{}", header.sqlite_version_number))
+                .child(format!("{}", header.sqlite_version_number)),
         )
         .child(
             div()
@@ -296,7 +305,7 @@ pub fn render_database_info(header: &DatabaseHeader) -> impl IntoElement {
                 .flex()
                 .justify_between()
                 .child("User Version:")
-                .child(format!("{}", header.user_version))
+                .child(format!("{}", header.user_version)),
         )
         .when(header.application_id != 0, |this| {
             this.child(
@@ -306,7 +315,7 @@ pub fn render_database_info(header: &DatabaseHeader) -> impl IntoElement {
                     .flex()
                     .justify_between()
                     .child("App ID:")
-                    .child(format!("0x{:08X}", header.application_id))
+                    .child(format!("0x{:08X}", header.application_id)),
             )
         })
 }
@@ -317,14 +326,26 @@ pub fn render_status_message(message: &str, is_error: bool) -> impl IntoElement 
         .p_3()
         .m_2()
         .rounded_md()
-        .bg(if is_error { rgb(0x5d1a1a) } else { rgb(0x1a5d2e) })
+        .bg(if is_error {
+            rgb(0x5d1a1a)
+        } else {
+            rgb(0x1a5d2e)
+        })
         .border_1()
-        .border_color(if is_error { rgb(0x991b1b) } else { rgb(0x16a34a) })
+        .border_color(if is_error {
+            rgb(0x991b1b)
+        } else {
+            rgb(0x16a34a)
+        })
         .child(
             div()
                 .text_sm()
-                .text_color(if is_error { rgb(0xfca5a5) } else { rgb(0x86efac) })
-                .child(message)
+                .text_color(if is_error {
+                    rgb(0xfca5a5)
+                } else {
+                    rgb(0x86efac)
+                })
+                .child(message),
         )
 }
 
@@ -334,11 +355,7 @@ pub fn render_loading_indicator() -> impl IntoElement {
         .items_center()
         .justify_center()
         .p_8()
-        .child(
-            div()
-                .text_color(rgb(0xaaaaaa))
-                .child("Loading...")
-        )
+        .child(div().text_color(rgb(0xaaaaaa)).child("Loading..."))
 }
 
 pub fn render_empty_state() -> impl IntoElement {
@@ -353,13 +370,13 @@ pub fn render_empty_state() -> impl IntoElement {
             div()
                 .text_xl()
                 .text_color(rgb(0xaaaaaa))
-                .child("No database loaded")
+                .child("No database loaded"),
         )
         .child(
             div()
                 .text_sm()
                 .text_color(rgb(0x888888))
-                .child("Open a SQLite database file to get started")
+                .child("Open a SQLite database file to get started"),
         )
 }
 
@@ -381,7 +398,7 @@ pub fn render_page_statistics(database_info: &DatabaseInfo) -> impl IntoElement 
                 .text_sm()
                 .font_weight(gpui::FontWeight::BOLD)
                 .text_color(rgb(0xffffff))
-                .child("Database Statistics")
+                .child("Database Statistics"),
         )
         .child(
             div()
@@ -390,7 +407,7 @@ pub fn render_page_statistics(database_info: &DatabaseInfo) -> impl IntoElement 
                 .flex()
                 .justify_between()
                 .child("Total Pages:")
-                .child(format!("{}", total_pages))
+                .child(format!("{}", total_pages)),
         )
         .child(
             div()
@@ -399,7 +416,7 @@ pub fn render_page_statistics(database_info: &DatabaseInfo) -> impl IntoElement 
                 .flex()
                 .justify_between()
                 .child("Page Size:")
-                .child(format!("{} bytes", page_size))
+                .child(format!("{} bytes", page_size)),
         )
         .child(
             div()
@@ -408,7 +425,7 @@ pub fn render_page_statistics(database_info: &DatabaseInfo) -> impl IntoElement 
                 .flex()
                 .justify_between()
                 .child("Total Free Space:")
-                .child(format!("{} bytes", total_free_space))
+                .child(format!("{} bytes", total_free_space)),
         )
         .child(
             div()
@@ -417,6 +434,6 @@ pub fn render_page_statistics(database_info: &DatabaseInfo) -> impl IntoElement 
                 .flex()
                 .justify_between()
                 .child("Avg Utilization:")
-                .child(format!("{:.1}%", avg_utilization))
+                .child(format!("{:.1}%", avg_utilization)),
         )
 }

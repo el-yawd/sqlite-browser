@@ -1,11 +1,14 @@
 pub mod sqlite_parser;
 
+use crate::models::DatabaseInfo;
 use anyhow::Result;
 use std::path::Path;
-use crate::models::DatabaseInfo;
 
 pub trait DatabaseParser {
-    fn parse_file<P: AsRef<Path> + Send>(&self, path: P) -> impl std::future::Future<Output = Result<DatabaseInfo>> + Send;
+    fn parse_file<P: AsRef<Path> + Send>(
+        &self,
+        path: P,
+    ) -> impl std::future::Future<Output = Result<DatabaseInfo>> + Send;
 }
 
 pub struct SqliteParser;

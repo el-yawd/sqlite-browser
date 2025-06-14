@@ -1,9 +1,9 @@
 use gpui::{App, Application, Bounds, WindowBounds, WindowOptions, actions, prelude::*, px, size};
 use std::path::PathBuf;
 
+mod file_manager;
 mod models;
 mod parser;
-mod file_manager;
 mod ui;
 
 use ui::SqliteBrowser;

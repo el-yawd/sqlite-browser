@@ -1,10 +1,10 @@
+use crate::models::DatabaseInfo;
+use crate::parser::{DatabaseParser, create_sqlite_parser};
 use anyhow::Result;
 use gpui::{Context, Task};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher, recommended_watcher};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use crate::models::DatabaseInfo;
-use crate::parser::{create_sqlite_parser, DatabaseParser};
 
 #[derive(Debug, Clone)]
 pub enum FileManagerEvent {
@@ -35,16 +35,12 @@ impl FileManager {
         self._watcher.is_some()
     }
 
-    pub fn open_file<T>(
-        &mut self, 
-        path: PathBuf, 
-        cx: &mut Context<T>
-    ) -> Task<Result<DatabaseInfo>>
+    pub fn open_file<T>(&mut self, path: PathBuf, cx: &mut Context<T>) -> Task<Result<DatabaseInfo>>
     where
         T: 'static,
     {
         let path_clone = path.clone();
-        
+
         cx.spawn(async move |_entity, _cx| {
             let parser = create_sqlite_parser();
             match parser.parse_file(&path_clone).await {
@@ -58,11 +54,7 @@ impl FileManager {
         self.current_file = path;
     }
 
-    pub fn start_watching<T>(
-        &mut self, 
-        path: &Path, 
-        cx: &mut Context<T>
-    ) -> Result<()>
+    pub fn start_watching<T>(&mut self, path: &Path, cx: &mut Context<T>) -> Result<()>
     where
         T: 'static,
     {
@@ -77,13 +69,19 @@ impl FileManager {
         let path_clone = path.to_path_buf();
         cx.spawn(async move |entity, cx| {
             let parser = create_sqlite_parser();
-            
+
             loop {
                 match rx.recv() {
                     Ok(event_result) => {
                         match event_result {
-                            Ok(Event { kind: EventKind::Modify(_), .. }) |
-                            Ok(Event { kind: EventKind::Create(_), .. }) => {
+                            Ok(Event {
+                                kind: EventKind::Modify(_),
+                                ..
+                            })
+                            | Ok(Event {
+                                kind: EventKind::Create(_),
+                                ..
+                            }) => {
                                 // File was modified, re-parse it
                                 match parser.parse_file(&path_clone).await {
                                     Ok(database_info) => {
@@ -91,11 +89,18 @@ impl FileManager {
                                         eprintln!("File {} was modified", path_clone.display());
                                     }
                                     Err(e) => {
-                                        eprintln!("Error re-parsing file {}: {}", path_clone.display(), e);
+                                        eprintln!(
+                                            "Error re-parsing file {}: {}",
+                                            path_clone.display(),
+                                            e
+                                        );
                                     }
                                 }
                             }
-                            Ok(Event { kind: EventKind::Remove(_), .. }) => {
+                            Ok(Event {
+                                kind: EventKind::Remove(_),
+                                ..
+                            }) => {
                                 // File was deleted
                                 eprintln!("File {} was deleted", path_clone.display());
                                 break;
@@ -115,7 +120,8 @@ impl FileManager {
                     }
                 }
             }
-        }).detach();
+        })
+        .detach();
 
         Ok(())
     }
@@ -124,10 +130,7 @@ impl FileManager {
         self._watcher = None;
     }
 
-    pub fn refresh_current_file<T>(
-        &self, 
-        cx: &mut Context<T>
-    ) -> Task<Result<DatabaseInfo>>
+    pub fn refresh_current_file<T>(&self, cx: &mut Context<T>) -> Task<Result<DatabaseInfo>>
     where
         T: 'static,
     {
@@ -156,7 +159,7 @@ mod tests {
     #[test]
     fn test_file_manager_creation() {
         let file_manager = FileManager::new();
-        
+
         assert!(file_manager.current_file().is_none());
         assert!(!file_manager.is_watching());
     }
@@ -165,10 +168,10 @@ mod tests {
     fn test_current_file_management() {
         let mut file_manager = FileManager::new();
         let test_path = PathBuf::from("/test/path.db");
-        
+
         file_manager.set_current_file(Some(test_path.clone()));
         assert_eq!(file_manager.current_file(), Some(test_path.as_path()));
-        
+
         file_manager.set_current_file(None);
         assert!(file_manager.current_file().is_none());
     }

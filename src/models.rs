@@ -28,10 +28,10 @@ pub struct DatabaseHeader {
 
 impl DatabaseHeader {
     pub fn actual_page_size(&self) -> usize {
-        if self.page_size == 1 { 
-            65536 
-        } else { 
-            self.page_size as usize 
+        if self.page_size == 1 {
+            65536
+        } else {
+            self.page_size as usize
         }
     }
 
@@ -69,14 +69,14 @@ impl PageType {
         match self {
             PageType::TableBTreeInterior => rgb(0x4CAF50).into(), // Green
             PageType::IndexBTreeInterior => rgb(0x2196F3).into(), // Blue
-            PageType::TableBTreeLeaf => rgb(0x8BC34A).into(), // Light Green
-            PageType::IndexBTreeLeaf => rgb(0x03DAC6).into(), // Cyan
-            PageType::FreelistTrunk => rgb(0xFF9800).into(), // Orange
-            PageType::FreelistLeaf => rgb(0xFFEB3B).into(), // Yellow
-            PageType::PayloadOverflow => rgb(0x9C27B0).into(), // Purple
-            PageType::PointerMap => rgb(0xE91E63).into(), // Pink
-            PageType::LockByte => rgb(0x607D8B).into(), // Blue Grey
-            PageType::Unknown => rgb(0x9E9E9E).into(), // Grey
+            PageType::TableBTreeLeaf => rgb(0x8BC34A).into(),     // Light Green
+            PageType::IndexBTreeLeaf => rgb(0x03DAC6).into(),     // Cyan
+            PageType::FreelistTrunk => rgb(0xFF9800).into(),      // Orange
+            PageType::FreelistLeaf => rgb(0xFFEB3B).into(),       // Yellow
+            PageType::PayloadOverflow => rgb(0x9C27B0).into(),    // Purple
+            PageType::PointerMap => rgb(0xE91E63).into(),         // Pink
+            PageType::LockByte => rgb(0x607D8B).into(),           // Blue Grey
+            PageType::Unknown => rgb(0x9E9E9E).into(),            // Grey
         }
     }
 
@@ -111,7 +111,10 @@ impl PageType {
     }
 
     pub fn has_rightmost_pointer(&self) -> bool {
-        matches!(self, PageType::TableBTreeInterior | PageType::IndexBTreeInterior)
+        matches!(
+            self,
+            PageType::TableBTreeInterior | PageType::IndexBTreeInterior
+        )
     }
 }
 
@@ -188,11 +191,12 @@ impl DatabaseInfo {
         }
 
         let page_size = self.header.actual_page_size();
-        let total_utilization: f32 = self.pages
+        let total_utilization: f32 = self
+            .pages
             .iter()
             .map(|p| p.utilization_percent(page_size))
             .sum();
-        
+
         total_utilization / self.pages.len() as f32
     }
 }
