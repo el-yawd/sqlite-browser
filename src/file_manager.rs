@@ -67,7 +67,7 @@ impl FileManager {
 
         // Spawn task to handle file change events
         let path_clone = path.to_path_buf();
-        cx.spawn(async move |entity, cx| {
+        cx.spawn(async move |_entity, _cx| {
             let parser = create_sqlite_parser();
 
             loop {
@@ -84,7 +84,7 @@ impl FileManager {
                             }) => {
                                 // File was modified, re-parse it
                                 match parser.parse_file(&path_clone).await {
-                                    Ok(database_info) => {
+                                    Ok(_database_info) => {
                                         // File was modified - the browser will handle this through other means
                                         eprintln!("File {} was modified", path_clone.display());
                                     }
@@ -154,7 +154,6 @@ impl Default for FileManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
 
     #[test]
     fn test_file_manager_creation() {

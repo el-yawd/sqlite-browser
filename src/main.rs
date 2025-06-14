@@ -8,7 +8,7 @@ mod ui;
 
 use ui::SqliteBrowser;
 
-actions!(sqlite_browser, [OpenFile, SelectPage, RefreshDatabase]);
+actions!(sqlite_browser, [OpenFile, RefreshDatabase]);
 
 fn main() {
     Application::new().run(|cx: &mut App| {
@@ -25,14 +25,13 @@ fn main() {
                     // Register action handlers
                     SqliteBrowser::register_actions(cx);
 
-                    // Try to open file from command line argument
+                    // Try to open file from command line argument, or show file dialog
                     if let Some(path) = std::env::args().nth(1) {
                         let path = PathBuf::from(path);
-                        if path.exists() {
-                            browser.open_file(path, cx).detach();
-                        } else {
-                            eprintln!("Warning: File '{}' does not exist", path.display());
-                        }
+                        browser.try_open_file_or_dialog(path, cx).detach();
+                    } else {
+                        // No file provided, show file dialog
+                        browser.open_file_dialog(cx).detach();
                     }
 
                     browser
