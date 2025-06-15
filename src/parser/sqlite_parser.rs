@@ -1,11 +1,13 @@
 use crate::models::{DatabaseHeader, DatabaseInfo, PageInfo, PageType};
 use anyhow::Result;
 use byteorder::{BigEndian, ReadBytesExt};
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
+use std::sync::Arc;
 
-pub async fn parse_database_file(path: &Path) -> Result<DatabaseInfo> {
+pub async fn parse_database_file(path: &Path) -> Result<Arc<DatabaseInfo>> {
     let mut file = File::open(path)?;
 
     // Parse header first
@@ -23,12 +25,14 @@ pub async fn parse_database_file(path: &Path) -> Result<DatabaseInfo> {
     let file_size = file_metadata.len();
     let total_pages = (file_size as usize) / page_size;
 
-    let mut pages = Vec::with_capacity(total_pages);
+    let mut pages = BTreeMap::new();
 
     // Parse each page
     for page_num in 1..=total_pages {
         match parse_page(&mut file, page_num as u32, page_size, &header).await {
-            Ok(page_info) => pages.push(page_info),
+            Ok(page_info) => {
+                let _ = pages.insert(page_num as u32, page_info);
+            }
             Err(e) => {
                 // Log error but continue parsing other pages
                 eprintln!("Warning: Failed to parse page {}: {}", page_num, e);
@@ -36,7 +40,11 @@ pub async fn parse_database_file(path: &Path) -> Result<DatabaseInfo> {
         }
     }
 
-    Ok(DatabaseInfo::new(header, pages, file_size))
+    Ok(Arc::new(DatabaseInfo::new(
+        header,
+        Arc::new(pages),
+        file_size,
+    )))
 }
 
 async fn parse_header(file: &mut File) -> Result<DatabaseHeader> {

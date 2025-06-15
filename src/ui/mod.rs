@@ -3,4 +3,3 @@ pub mod components;
 pub mod entities;
 
 pub use browser::SqliteBrowser;
-pub use entities::*;

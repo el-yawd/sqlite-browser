@@ -162,16 +162,20 @@ pub fn render_sidebar(
 }
 
 pub fn render_page_details(page: &PageInfo, page_size: Option<usize>) -> impl IntoElement {
-    let used_space = page_size.map(|size| size as u16 - page.free_space).unwrap_or(0);
+    let used_space = page_size
+        .map(|size| size as u16 - page.free_space)
+        .unwrap_or(0);
     let total_fragmented = page.fragmented_bytes as u16;
-    let efficiency = page_size.map(|size| {
-        let usable_space = size as u16 - page.free_space - total_fragmented;
-        if size > 0 {
-            (usable_space as f32 / size as f32) * 100.0
-        } else {
-            0.0
-        }
-    }).unwrap_or(0.0);
+    let efficiency = page_size
+        .map(|size| {
+            let usable_space = size as u16 - page.free_space - total_fragmented;
+            if size > 0 {
+                (usable_space as f32 / size as f32) * 100.0
+            } else {
+                0.0
+            }
+        })
+        .unwrap_or(0.0);
 
     div()
         .flex()
@@ -188,14 +192,14 @@ pub fn render_page_details(page: &PageInfo, page_size: Option<usize>) -> impl In
                     div()
                         .size(px(16.0))
                         .rounded_full()
-                        .bg(page.page_type.color())
+                        .bg(page.page_type.color()),
                 )
                 .child(
                     div()
                         .text_lg()
                         .font_weight(gpui::FontWeight::BOLD)
-                        .child(format!("Page {}", page.page_number))
-                )
+                        .child(format!("Page {}", page.page_number)),
+                ),
         )
         .child(
             div()
@@ -216,8 +220,8 @@ pub fn render_page_details(page: &PageInfo, page_size: Option<usize>) -> impl In
                             div()
                                 .text_xs()
                                 .text_color(rgb(0xaaaaaa))
-                                .child(format!("({})", page.page_type.short_name()))
-                        )
+                                .child(format!("({})", page.page_type.short_name())),
+                        ),
                 ),
         )
         .child(
@@ -276,9 +280,9 @@ pub fn render_page_details(page: &PageInfo, page_size: Option<usize>) -> impl In
                                 div()
                                     .text_xs()
                                     .text_color(rgb(0xaaaaaa))
-                                    .child(format!("({:.1}%)", percentage))
+                                    .child(format!("({:.1}%)", percentage)),
                             )
-                        })
+                        }),
                 ),
         )
         .child(
@@ -297,13 +301,8 @@ pub fn render_page_details(page: &PageInfo, page_size: Option<usize>) -> impl In
                         .gap_2()
                         .child(div().child(format!("{} bytes", page.fragmented_bytes)))
                         .when(page.fragmented_bytes > 0, |this| {
-                            this.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(0xff9800))
-                                    .child("⚠")
-                            )
-                        })
+                            this.child(div().text_xs().text_color(rgb(0xff9800)).child("⚠"))
+                        }),
                 ),
         )
         .when_some(page.rightmost_pointer, |this, ptr| {
@@ -352,10 +351,11 @@ pub fn render_page_details(page: &PageInfo, page_size: Option<usize>) -> impl In
                                             } else {
                                                 rgb(0x4CAF50)
                                             })
-                                            .w(px((page.utilization_percent(size) / 100.0 * 50.0) as f32))
-                                    )
-                            )
-                    )
+                                            .w(px((page.utilization_percent(size) / 100.0 * 50.0)
+                                                as f32)),
+                                    ),
+                            ),
+                    ),
             )
             .child(
                 div()
@@ -366,17 +366,15 @@ pub fn render_page_details(page: &PageInfo, page_size: Option<usize>) -> impl In
                             .font_weight(gpui::FontWeight::BOLD)
                             .child("Efficiency:"),
                     )
-                    .child(
-                        div()
-                            .child(format!("{:.1}%", efficiency))
-                            .text_color(if efficiency > 90.0 {
-                                rgb(0x4CAF50)
-                            } else if efficiency > 70.0 {
-                                rgb(0xff9800)
-                            } else {
-                                rgb(0xff4444)
-                            })
-                    )
+                    .child(div().child(format!("{:.1}%", efficiency)).text_color(
+                        if efficiency > 90.0 {
+                            rgb(0x4CAF50)
+                        } else if efficiency > 70.0 {
+                            rgb(0xff9800)
+                        } else {
+                            rgb(0xff4444)
+                        },
+                    )),
             )
         })
 }
@@ -501,17 +499,15 @@ pub fn render_empty_state() -> impl IntoElement {
             div()
                 .text_xl()
                 .text_color(rgb(0xaaaaaa))
-                .child("No database loaded")
+                .child("No database loaded"),
         )
         .child(
             div()
                 .text_sm()
                 .text_color(rgb(0x888888))
-                .child("Open a SQLite database file to get started")
+                .child("Open a SQLite database file to get started"),
         )
-        .child(
-            render_open_file_button()
-        )
+        .child(render_open_file_button())
 }
 
 pub fn render_open_file_button() -> impl IntoElement {
@@ -530,7 +526,7 @@ pub fn render_open_file_button() -> impl IntoElement {
                 .text_sm()
                 .font_weight(gpui::FontWeight::MEDIUM)
                 .text_color(rgb(0xffffff))
-                .child("Open File")
+                .child("Open File"),
         )
         .id("open-file-button")
 }
@@ -538,8 +534,6 @@ pub fn render_open_file_button() -> impl IntoElement {
 pub fn render_page_statistics(database_info: &DatabaseInfo) -> impl IntoElement {
     let total_pages = database_info.page_count();
     let page_size = database_info.header.actual_page_size();
-    let total_free_space = database_info.total_free_space();
-    let avg_utilization = database_info.average_utilization();
 
     div()
         .flex()
@@ -572,23 +566,5 @@ pub fn render_page_statistics(database_info: &DatabaseInfo) -> impl IntoElement 
                 .justify_between()
                 .child("Page Size:")
                 .child(format!("{} bytes", page_size)),
-        )
-        .child(
-            div()
-                .text_xs()
-                .text_color(rgb(0xcccccc))
-                .flex()
-                .justify_between()
-                .child("Total Free Space:")
-                .child(format!("{} bytes", total_free_space)),
-        )
-        .child(
-            div()
-                .text_xs()
-                .text_color(rgb(0xcccccc))
-                .flex()
-                .justify_between()
-                .child("Avg Utilization:")
-                .child(format!("{:.1}%", avg_utilization)),
         )
 }

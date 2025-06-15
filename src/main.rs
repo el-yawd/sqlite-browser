@@ -22,9 +22,6 @@ fn main() {
                 cx.new(|cx| {
                     let mut browser = SqliteBrowser::new(cx);
 
-                    // Register action handlers
-                    SqliteBrowser::register_actions(cx);
-
                     // Try to open file from command line argument, or show file dialog
                     if let Some(path) = std::env::args().nth(1) {
                         let path = PathBuf::from(path);

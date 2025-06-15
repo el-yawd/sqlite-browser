@@ -1,21 +1,18 @@
+use std::sync::Arc;
+
 use crate::models::{DatabaseInfo, PageInfo};
 use crate::ui::components;
-use gpui::{
-    Context, IntoElement, ParentElement, Render, Window,
-    div, px, prelude::*, rgb
-};
+use gpui::{Context, IntoElement, ParentElement, Render, Window, div, prelude::*, px, rgb};
 
 pub struct PageSidebar {
-    selected_page: Option<u32>,
-    pages: Vec<PageInfo>,
-    database_info: Option<DatabaseInfo>,
+    pub selected_page: Option<u32>,
+    database_info: Option<Arc<DatabaseInfo>>,
 }
 
 impl PageSidebar {
     pub fn new() -> Self {
         Self {
             selected_page: None,
-            pages: Vec::new(),
             database_info: None,
         }
     }
@@ -23,12 +20,10 @@ impl PageSidebar {
     pub fn update_data(
         &mut self,
         selected_page: Option<u32>,
-        pages: Vec<PageInfo>,
-        database_info: Option<DatabaseInfo>,
+        database_info: Option<Arc<DatabaseInfo>>,
         cx: &mut Context<Self>,
     ) {
         self.selected_page = selected_page;
-        self.pages = pages;
         self.database_info = database_info;
         cx.notify();
     }
@@ -38,16 +33,10 @@ impl PageSidebar {
         cx.notify();
     }
 
-    pub fn selected_page(&self) -> Option<u32> {
-        self.selected_page
-    }
-
     fn get_selected_page_info(&self) -> Option<&PageInfo> {
-        if let Some(selected_page_num) = self.selected_page {
-            self.pages.iter().find(|p| p.page_number == selected_page_num)
-        } else {
-            None
-        }
+        self.database_info
+            .as_ref()?
+            .get_page_info(self.selected_page?)
     }
 }
 
@@ -77,7 +66,9 @@ impl Render for PageSidebar {
                     .child(if let Some(page) = self.get_selected_page_info() {
                         components::render_page_details(
                             page,
-                            self.database_info.as_ref().map(|info| info.header.actual_page_size()),
+                            self.database_info
+                                .as_ref()
+                                .map(|info| info.header.actual_page_size()),
                         )
                         .into_any_element()
                     } else {
