@@ -4,13 +4,13 @@ use anyhow::Result;
 use gpui::{Context, EventEmitter, Task};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher, recommended_watcher};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use tokio::sync::mpsc as tokio_mpsc;
 
 #[derive(Debug, Clone)]
 pub enum FileManagerEvent {
-    FileOpened(PathBuf, DatabaseInfo),
-    FileModified(PathBuf, DatabaseInfo),
+    FileOpened(PathBuf, Arc<DatabaseInfo>),
+    FileModified(PathBuf, Arc<DatabaseInfo>),
     FileDeleted(PathBuf),
     ParseError(PathBuf, String),
 }
@@ -36,7 +36,11 @@ impl FileManager {
         self._watcher.is_some()
     }
 
-    pub fn open_file<T>(&mut self, path: PathBuf, cx: &mut Context<T>) -> Task<Result<DatabaseInfo>>
+    pub fn open_file<T>(
+        &mut self,
+        path: PathBuf,
+        cx: &mut Context<T>,
+    ) -> Task<Result<Arc<DatabaseInfo>>>
     where
         T: 'static,
     {
@@ -164,7 +168,7 @@ impl FileManager {
         self._watcher = None;
     }
 
-    pub fn refresh_current_file<T>(&self, cx: &mut Context<T>) -> Task<Result<DatabaseInfo>>
+    pub fn refresh_current_file<T>(&self, cx: &mut Context<T>) -> Task<Result<Arc<DatabaseInfo>>>
     where
         T: 'static,
     {

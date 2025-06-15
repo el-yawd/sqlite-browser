@@ -1,6 +1,8 @@
+use std::{collections::BTreeMap, sync::Arc};
+
 use gpui::{Hsla, rgb};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct DatabaseHeader {
     pub magic: [u8; 16],
     pub page_size: u16,
@@ -153,15 +155,19 @@ impl PageInfo {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct DatabaseInfo {
     pub header: DatabaseHeader,
-    pub pages: Vec<PageInfo>,
+    pub pages: Arc<BTreeMap<u32, PageInfo>>,
     pub total_file_size: u64,
 }
 
 impl DatabaseInfo {
-    pub fn new(header: DatabaseHeader, pages: Vec<PageInfo>, total_file_size: u64) -> Self {
+    pub fn new(
+        header: DatabaseHeader,
+        pages: Arc<BTreeMap<u32, PageInfo>>,
+        total_file_size: u64,
+    ) -> Self {
         Self {
             header,
             pages,
@@ -173,30 +179,7 @@ impl DatabaseInfo {
         self.pages.len()
     }
 
-    pub fn get_page(&self, page_number: u32) -> Option<&PageInfo> {
-        self.pages.iter().find(|p| p.page_number == page_number)
-    }
-
-    pub fn pages_by_type(&self, page_type: PageType) -> impl Iterator<Item = &PageInfo> {
-        self.pages.iter().filter(move |p| p.page_type == page_type)
-    }
-
-    pub fn total_free_space(&self) -> u64 {
-        self.pages.iter().map(|p| p.free_space as u64).sum()
-    }
-
-    pub fn average_utilization(&self) -> f32 {
-        if self.pages.is_empty() {
-            return 0.0;
-        }
-
-        let page_size = self.header.actual_page_size();
-        let total_utilization: f32 = self
-            .pages
-            .iter()
-            .map(|p| p.utilization_percent(page_size))
-            .sum();
-
-        total_utilization / self.pages.len() as f32
+    pub fn get_page_info(&self, page_number: u32) -> Option<&PageInfo> {
+        self.pages.get(&page_number)
     }
 }

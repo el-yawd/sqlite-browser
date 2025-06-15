@@ -2,11 +2,10 @@ use crate::file_manager::FileManager;
 use crate::models::DatabaseInfo;
 use anyhow::Result;
 use gpui::{
-    Context, EventEmitter, IntoElement, ParentElement, Render, Task, Window,
-    div, px, prelude::*, rgb
+    Context, EventEmitter, IntoElement, ParentElement, Render, Task, Window, div, prelude::*, rgb,
 };
 use rfd::FileDialog;
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 #[derive(Clone, Debug)]
 pub struct FileOpenRequested {
@@ -16,7 +15,7 @@ pub struct FileOpenRequested {
 #[derive(Clone, Debug)]
 pub struct FileOpened {
     pub path: PathBuf,
-    pub database_info: DatabaseInfo,
+    pub database_info: Arc<DatabaseInfo>,
 }
 
 #[derive(Clone, Debug)]
@@ -82,36 +81,38 @@ impl FileDialogManager {
 
         let parse_task = self.file_manager.open_file(path.clone(), cx);
 
-        cx.spawn(async move |entity, cx| {
-            match parse_task.await {
-                Ok(database_info) => {
-                    entity.update(cx, |this, cx| {
-                        this.file_manager.set_current_file(Some(path.clone()));
-                        this.state = FileDialogState::Idle;
-                        cx.emit(FileOpened {
-                            path: path.clone(),
-                            database_info: database_info.clone(),
-                        });
-                        cx.notify();
-                    })?;
-                    Ok(())
-                }
-                Err(e) => {
-                    entity.update(cx, |this, cx| {
-                        this.state = FileDialogState::Error(e.to_string());
-                        cx.emit(FileOpenError {
-                            path: path.clone(),
-                            error: e.to_string(),
-                        });
-                        cx.notify();
-                    })?;
-                    Err(e)
-                }
+        cx.spawn(async move |entity, cx| match parse_task.await {
+            Ok(database_info) => {
+                entity.update(cx, |this, cx| {
+                    this.file_manager.set_current_file(Some(path.clone()));
+                    this.state = FileDialogState::Idle;
+                    cx.emit(FileOpened {
+                        path: path.clone(),
+                        database_info: database_info.clone(),
+                    });
+                    cx.notify();
+                })?;
+                Ok(())
+            }
+            Err(e) => {
+                entity.update(cx, |this, cx| {
+                    this.state = FileDialogState::Error(e.to_string());
+                    cx.emit(FileOpenError {
+                        path: path.clone(),
+                        error: e.to_string(),
+                    });
+                    cx.notify();
+                })?;
+                Err(e)
             }
         })
     }
 
-    pub fn try_open_file_or_dialog(&mut self, path: PathBuf, cx: &mut Context<Self>) -> Task<Result<()>> {
+    pub fn try_open_file_or_dialog(
+        &mut self,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
         if path.exists() && path.is_file() {
             self.open_file(path, cx)
         } else {
@@ -142,149 +143,129 @@ impl FileDialogManager {
 impl Render for FileDialogManager {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         match &self.state {
-            FileDialogState::Idle => {
-                div()
-                    .id("file-dialog-idle")
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .gap_4()
-                    .p_8()
-                    .child(
-                        div()
-                            .text_xl()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(rgb(0xffffff))
-                            .child("SQLite Browser"),
-                    )
-                    .child(
-                        div()
-                            .text_color(rgb(0xaaaaaa))
-                            .child("Open a SQLite database file to get started"),
-                    )
-                    .child(
-                        div()
-                            .px_6()
-                            .py_3()
-                            .bg(rgb(0x007acc))
-                            .hover(|this| this.bg(rgb(0x005a9e)))
-                            .rounded_md()
-                            .cursor_pointer()
-                            .on_mouse_down(
-                                gpui::MouseButton::Left,
-                                cx.listener(|this, _event, _window, cx| {
-                                    this.open_file_dialog(cx).detach();
-                                }),
-                            )
-                            .child(
-                                div()
-                                    .text_color(rgb(0xffffff))
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .child("Open Database"),
-                            ),
-                    )
-            }
-            FileDialogState::ShowingDialog => {
-                div()
-                    .id("file-dialog-showing")
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .text_color(rgb(0xaaaaaa))
-                            .child("Opening file dialog..."),
-                    )
-            }
-            FileDialogState::Loading(path) => {
-                div()
-                    .id("file-dialog-loading")
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .gap_4()
-                    .child(
-                        div()
-                            .text_color(rgb(0xffffff))
-                            .child("Loading database..."),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(0xaaaaaa))
-                            .child(format!("{}", path.display())),
-                    )
-            }
-            FileDialogState::Error(error) => {
-                div()
-                    .id("file-dialog-error")
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .gap_4()
-                    .p_8()
-                    .child(
-                        div()
-                            .text_lg()
-                            .text_color(rgb(0xff6b6b))
-                            .child("Error loading database"),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(0xaaaaaa))
-                            .child(error.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap_4()
-                            .child(
-                                div()
-                                    .px_4()
-                                    .py_2()
-                                    .bg(rgb(0x007acc))
-                                    .hover(|this| this.bg(rgb(0x005a9e)))
-                                    .rounded_md()
-                                    .cursor_pointer()
-                                    .on_mouse_down(
-                                        gpui::MouseButton::Left,
-                                        cx.listener(|this, _event, _window, cx| {
-                                            this.open_file_dialog(cx).detach();
-                                        }),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_color(rgb(0xffffff))
-                                            .child("Try Again"),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .px_4()
-                                    .py_2()
-                                    .border_1()
-                                    .border_color(rgb(0x555555))
-                                    .hover(|this| this.bg(rgb(0x3e3e3e)))
-                                    .rounded_md()
-                                    .cursor_pointer()
-                                    .on_mouse_down(
-                                        gpui::MouseButton::Left,
-                                        cx.listener(|this, _event, _window, cx| {
-                                            this.clear_error(cx);
-                                        }),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_color(rgb(0xffffff))
-                                            .child("Dismiss"),
-                                    ),
-                            ),
-                    )
-            }
+            FileDialogState::Idle => div()
+                .id("file-dialog-idle")
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap_4()
+                .p_8()
+                .child(
+                    div()
+                        .text_xl()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(rgb(0xffffff))
+                        .child("SQLite Browser"),
+                )
+                .child(
+                    div()
+                        .text_color(rgb(0xaaaaaa))
+                        .child("Open a SQLite database file to get started"),
+                )
+                .child(
+                    div()
+                        .px_6()
+                        .py_3()
+                        .bg(rgb(0x007acc))
+                        .hover(|this| this.bg(rgb(0x005a9e)))
+                        .rounded_md()
+                        .cursor_pointer()
+                        .on_mouse_down(
+                            gpui::MouseButton::Left,
+                            cx.listener(|this, _event, _window, cx| {
+                                this.open_file_dialog(cx).detach();
+                            }),
+                        )
+                        .child(
+                            div()
+                                .text_color(rgb(0xffffff))
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .child("Open Database"),
+                        ),
+                ),
+            FileDialogState::ShowingDialog => div()
+                .id("file-dialog-showing")
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .text_color(rgb(0xaaaaaa))
+                        .child("Opening file dialog..."),
+                ),
+            FileDialogState::Loading(path) => div()
+                .id("file-dialog-loading")
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap_4()
+                .child(div().text_color(rgb(0xffffff)).child("Loading database..."))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(0xaaaaaa))
+                        .child(format!("{}", path.display())),
+                ),
+            FileDialogState::Error(error) => div()
+                .id("file-dialog-error")
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap_4()
+                .p_8()
+                .child(
+                    div()
+                        .text_lg()
+                        .text_color(rgb(0xff6b6b))
+                        .child("Error loading database"),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(0xaaaaaa))
+                        .child(error.clone()),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .gap_4()
+                        .child(
+                            div()
+                                .px_4()
+                                .py_2()
+                                .bg(rgb(0x007acc))
+                                .hover(|this| this.bg(rgb(0x005a9e)))
+                                .rounded_md()
+                                .cursor_pointer()
+                                .on_mouse_down(
+                                    gpui::MouseButton::Left,
+                                    cx.listener(|this, _event, _window, cx| {
+                                        this.open_file_dialog(cx).detach();
+                                    }),
+                                )
+                                .child(div().text_color(rgb(0xffffff)).child("Try Again")),
+                        )
+                        .child(
+                            div()
+                                .px_4()
+                                .py_2()
+                                .border_1()
+                                .border_color(rgb(0x555555))
+                                .hover(|this| this.bg(rgb(0x3e3e3e)))
+                                .rounded_md()
+                                .cursor_pointer()
+                                .on_mouse_down(
+                                    gpui::MouseButton::Left,
+                                    cx.listener(|this, _event, _window, cx| {
+                                        this.clear_error(cx);
+                                    }),
+                                )
+                                .child(div().text_color(rgb(0xffffff)).child("Dismiss")),
+                        ),
+                ),
         }
     }
 }
