@@ -1,10 +1,11 @@
 use crate::models::DatabaseInfo;
 use crate::parser::{DatabaseParser, create_sqlite_parser};
 use anyhow::Result;
-use gpui::{Context, Task};
+use gpui::{Context, EventEmitter, Task};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher, recommended_watcher};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
+use tokio::sync::mpsc as tokio_mpsc;
 
 #[derive(Debug, Clone)]
 pub enum FileManagerEvent {
@@ -56,23 +57,33 @@ impl FileManager {
 
     pub fn start_watching<T>(&mut self, path: &Path, cx: &mut Context<T>) -> Result<()>
     where
-        T: 'static,
+        T: EventEmitter<FileManagerEvent> + 'static,
     {
-        let (tx, rx) = mpsc::channel();
+        let (sync_tx, sync_rx) = mpsc::channel();
+        let (async_tx, mut async_rx) = tokio_mpsc::unbounded_channel();
 
-        let mut watcher = recommended_watcher(tx)?;
+        let mut watcher = recommended_watcher(sync_tx)?;
         watcher.watch(path, RecursiveMode::NonRecursive)?;
 
         self._watcher = Some(watcher);
 
+        // Bridge sync channel to async channel in background thread
+        std::thread::spawn(move || {
+            while let Ok(event) = sync_rx.recv() {
+                if async_tx.send(event).is_err() {
+                    break; // Receiver dropped
+                }
+            }
+        });
+
         // Spawn task to handle file change events
         let path_clone = path.to_path_buf();
-        cx.spawn(async move |_entity, _cx| {
+        cx.spawn(async move |entity, cx| {
             let parser = create_sqlite_parser();
 
             loop {
-                match rx.recv() {
-                    Ok(event_result) => {
+                match async_rx.recv().await {
+                    Some(event_result) => {
                         match event_result {
                             Ok(Event {
                                 kind: EventKind::Modify(_),
@@ -84,16 +95,35 @@ impl FileManager {
                             }) => {
                                 // File was modified, re-parse it
                                 match parser.parse_file(&path_clone).await {
-                                    Ok(_database_info) => {
-                                        // File was modified - the browser will handle this through other means
-                                        eprintln!("File {} was modified", path_clone.display());
+                                    Ok(database_info) => {
+                                        // File was modified - emit event to update UI
+                                        if let Ok(()) = entity.update(cx, |_this, cx| {
+                                            eprintln!("File modified: {}", path_clone.display());
+                                            cx.emit(FileManagerEvent::FileModified(
+                                                path_clone.clone(),
+                                                database_info,
+                                            ));
+                                        }) {
+                                            // Successfully updated entity
+                                        } else {
+                                            eprintln!("DEBUG: Failed to emit ParseError event - entity dropped");
+                                            // Entity was dropped, stop watching
+                                            break;
+                                        }
                                     }
                                     Err(e) => {
-                                        eprintln!(
-                                            "Error re-parsing file {}: {}",
-                                            path_clone.display(),
-                                            e
-                                        );
+                                        // Emit parse error event
+                                        if let Ok(()) = entity.update(cx, |_this, cx| {
+                                            cx.emit(FileManagerEvent::ParseError(
+                                                path_clone.clone(),
+                                                e.to_string(),
+                                            ));
+                                        }) {
+                                            // Successfully updated entity
+                                        } else {
+                                            // Entity was dropped, stop watching
+                                            break;
+                                        }
                                     }
                                 }
                             }
@@ -101,8 +131,12 @@ impl FileManager {
                                 kind: EventKind::Remove(_),
                                 ..
                             }) => {
-                                // File was deleted
-                                eprintln!("File {} was deleted", path_clone.display());
+                                // File was deleted - emit event and stop watching
+                                if let Ok(()) = entity.update(cx, |_this, cx| {
+                                    cx.emit(FileManagerEvent::FileDeleted(path_clone.clone()));
+                                }) {
+                                    // Successfully updated entity
+                                }
                                 break;
                             }
                             Ok(_) => {
@@ -114,8 +148,8 @@ impl FileManager {
                             }
                         }
                     }
-                    Err(e) => {
-                        eprintln!("File watcher channel error: {}", e);
+                    None => {
+                        eprintln!("File watcher channel closed");
                         break;
                     }
                 }

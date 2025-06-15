@@ -3,8 +3,8 @@ use crate::models::{DatabaseInfo, PageInfo};
 use crate::ui::components;
 use anyhow::Result;
 use gpui::{
-    Context, EventEmitter, FocusHandle, IntoElement, ParentElement, Render, Task, Window, actions,
-    div, impl_actions, prelude::*, px,
+    Context, EventEmitter, FocusHandle, IntoElement, ParentElement, Render, Subscription, Task,
+    Window, actions, div, impl_actions, prelude::*, px,
 };
 use rfd::FileDialog;
 use std::path::PathBuf;
@@ -23,20 +23,33 @@ pub struct SqliteBrowser {
     database_info: Option<DatabaseInfo>,
     selected_page: Option<u32>,
     focus_handle: FocusHandle,
-    status_message: Option<(String, bool)>, // (message, is_error)
+    status_message: Option<(String, bool)>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl EventEmitter<FileManagerEvent> for SqliteBrowser {}
 
 impl SqliteBrowser {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        Self {
+        let mut browser = Self {
             file_manager: FileManager::new(),
             database_info: None,
             selected_page: None,
             focus_handle: cx.focus_handle(),
             status_message: None,
-        }
+            _subscriptions: Vec::new(),
+        };
+
+        // Subscribe to our own events to handle file watcher notifications
+        let subscription = cx.subscribe(
+            &cx.entity(),
+            |this, _entity, event: &FileManagerEvent, cx| {
+                this.handle_file_manager_event(event, cx);
+            },
+        );
+        browser._subscriptions.push(subscription);
+
+        browser
     }
 
     pub fn open_file(&mut self, path: PathBuf, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -269,12 +282,14 @@ impl SqliteBrowser {
                     false,
                     cx,
                 );
+                cx.notify(); // Trigger UI re-rendering
             }
             FileManagerEvent::FileDeleted(path) => {
                 self.database_info = None;
                 self.selected_page = None;
                 self.file_manager.set_current_file(None);
                 self.set_status_message(format!("File {} was deleted", path.display()), true, cx);
+                cx.notify(); // Trigger UI re-rendering
             }
             FileManagerEvent::ParseError(path, error) => {
                 self.set_status_message(
@@ -289,15 +304,6 @@ impl SqliteBrowser {
 
 impl Render for SqliteBrowser {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Set up event handling for file manager events
-        cx.subscribe(
-            &cx.entity(),
-            |this, _entity, event: &FileManagerEvent, cx| {
-                this.handle_file_manager_event(event, cx);
-            },
-        )
-        .detach();
-
         div().flex().size_full().bg(gpui::rgb(0x1e1e1e)).child(
             div()
                 .flex()
@@ -341,7 +347,9 @@ impl SqliteBrowser {
             page_grid = page_grid.child(
                 div()
                     .size(px(80.0))
+                    .id("Pages")
                     .bg(page.page_type.color())
+                    .overflow_scroll()
                     .when(is_selected, |this| {
                         this.border_2().border_color(gpui::rgb(0xffffff))
                     })
@@ -355,18 +363,19 @@ impl SqliteBrowser {
                     .justify_center()
                     .cursor_pointer()
                     .hover(|this| this.opacity(0.7))
-                    .on_mouse_down(
-                        gpui::MouseButton::Left,
-                        cx.listener(move |this, _event, _window, cx| {
-                            let action = SelectPage { page_number };
-                            this.handle_select_page(&action, cx);
-                        }),
-                    )
                     .child(
                         div()
                             .text_xs()
                             .font_weight(gpui::FontWeight::BOLD)
                             .text_color(gpui::rgb(0xffffff))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(move |this, _event, _window, cx| {
+                                    eprintln!("Page selected!");
+                                    let action = SelectPage { page_number };
+                                    this.handle_select_page(&action, cx);
+                                }),
+                            )
                             .child(format!("{}", page.page_number)),
                     )
                     .child(
