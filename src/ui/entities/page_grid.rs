@@ -27,7 +27,6 @@ impl PageGrid {
 
     pub fn update_pages(&mut self, pages: Arc<BTreeMap<u32, PageInfo>>, cx: &mut Context<Self>) {
         self.pages = pages;
-        cx.notify();
     }
 
     pub fn select_page(&mut self, page_number: u32, cx: &mut Context<Self>) {

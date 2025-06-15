@@ -151,9 +151,11 @@ impl SqliteBrowser {
     }
 
     fn handle_page_selected(&mut self, page_number: u32, cx: &mut Context<Self>) {
+        eprintln!("Page selected {}", page_number);
         self.page_sidebar.update(cx, |sidebar, cx| {
             sidebar.set_selected_page(Some(page_number), cx);
         });
+        cx.notify();
     }
 
     fn set_status_message(&mut self, message: String, is_error: bool, cx: &mut Context<Self>) {
@@ -367,11 +369,5 @@ impl SqliteBrowser {
                         )
                     }),
             )
-    }
-
-    pub fn handle_select_page(&mut self, action: &SelectPage, cx: &mut Context<Self>) {
-        self.page_grid.update(cx, |grid, cx| {
-            grid.select_page(action.page_number, cx);
-        });
     }
 }
