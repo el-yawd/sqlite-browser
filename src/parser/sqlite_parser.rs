@@ -6,12 +6,45 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
-pub async fn parse_database_file(path: &Path) -> Result<Arc<DatabaseInfo>> {
+/// Progress callback function type for reporting parsing progress
+pub type ProgressCallback = Box<dyn Fn(f32) + Send + Sync>;
+
+/// Configuration for batch parsing operations
+#[derive(Debug, Clone)]
+pub struct BatchParseConfig {
+    pub batch_size: usize,
+    pub progress_update_interval: Duration,
+    pub enable_cancellation: bool,
+}
+
+impl Default for BatchParseConfig {
+    fn default() -> Self {
+        Self {
+            batch_size: 100,
+            progress_update_interval: Duration::from_millis(100),
+            enable_cancellation: true,
+        }
+    }
+}
+
+pub fn parse_database_file(path: &Path) -> Result<Arc<DatabaseInfo>> {
+    parse_database_file_with_progress(path, None, None, None)
+}
+
+pub fn parse_database_file_with_progress(
+    path: &Path,
+    progress_callback: Option<ProgressCallback>,
+    cancel_flag: Option<Arc<AtomicBool>>,
+    config: Option<BatchParseConfig>,
+) -> Result<Arc<DatabaseInfo>> {
     let mut file = File::open(path)?;
+    let config = config.unwrap_or_default();
 
     // Parse header first
-    let header = parse_header(&mut file).await?;
+    let header = parse_header(&mut file)?;
 
     // Validate it's a SQLite file
     if !header.is_valid_sqlite_file() {
@@ -26,18 +59,49 @@ pub async fn parse_database_file(path: &Path) -> Result<Arc<DatabaseInfo>> {
     let total_pages = (file_size as usize) / page_size;
 
     let mut pages = BTreeMap::new();
+    let mut last_progress_update = Instant::now();
 
-    // Parse each page
-    for page_num in 1..=total_pages {
-        match parse_page(&mut file, page_num as u32, page_size, &header).await {
-            Ok(page_info) => {
-                let _ = pages.insert(page_num as u32, page_info);
-            }
-            Err(e) => {
-                // Log error but continue parsing other pages
-                eprintln!("Warning: Failed to parse page {}: {}", page_num, e);
+    // Parse pages in batches to avoid UI blocking
+    for batch_start in (1..=total_pages).step_by(config.batch_size) {
+        // Check for cancellation
+        if let Some(ref cancel) = cancel_flag {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(anyhow::anyhow!("Parsing cancelled by user"));
             }
         }
+
+        let batch_end = (batch_start + config.batch_size - 1).min(total_pages);
+        
+        // Parse batch of pages
+        for page_num in batch_start..=batch_end {
+            match parse_page(&mut file, page_num as u32, page_size, &header) {
+                Ok(page_info) => {
+                    let _ = pages.insert(page_num as u32, page_info);
+                }
+                Err(e) => {
+                    // Log error but continue parsing other pages
+                    eprintln!("Warning: Failed to parse page {}: {}", page_num, e);
+                }
+            }
+        }
+
+        // Update progress if callback provided and enough time has passed
+        if let Some(ref callback) = progress_callback {
+            let now = Instant::now();
+            if now.duration_since(last_progress_update) >= config.progress_update_interval {
+                let progress = batch_end as f32 / total_pages as f32;
+                callback(progress);
+                last_progress_update = now;
+            }
+        }
+
+        // Yield control to prevent UI blocking (simulate async behavior)
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    // Final progress update
+    if let Some(ref callback) = progress_callback {
+        callback(1.0);
     }
 
     Ok(Arc::new(DatabaseInfo::new(
@@ -47,7 +111,7 @@ pub async fn parse_database_file(path: &Path) -> Result<Arc<DatabaseInfo>> {
     )))
 }
 
-async fn parse_header(file: &mut File) -> Result<DatabaseHeader> {
+fn parse_header(file: &mut File) -> Result<DatabaseHeader> {
     file.seek(SeekFrom::Start(0))?;
 
     // Read SQLite header (first 100 bytes)
@@ -106,7 +170,7 @@ async fn parse_header(file: &mut File) -> Result<DatabaseHeader> {
     })
 }
 
-async fn parse_page(
+fn parse_page(
     file: &mut File,
     page_number: u32,
     page_size: usize,
