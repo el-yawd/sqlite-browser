@@ -1,4 +1,4 @@
-use crate::file_manager::FileManager;
+use crate::file_manager::{FileManager, FileManagerEvent};
 use crate::models::DatabaseInfo;
 use anyhow::Result;
 use gpui::{
@@ -40,6 +40,7 @@ pub struct FileDialogManager {
 impl EventEmitter<FileOpenRequested> for FileDialogManager {}
 impl EventEmitter<FileOpened> for FileDialogManager {}
 impl EventEmitter<FileOpenError> for FileDialogManager {}
+impl EventEmitter<FileManagerEvent> for FileDialogManager {}
 
 impl FileDialogManager {
     pub fn new() -> Self {
@@ -77,7 +78,7 @@ impl FileDialogManager {
         cx.notify();
 
         // Emit file open requested event
-        cx.emit(FileOpenRequested { path: path.clone() });
+        // cx.emit(FileOpenRequested { path: path.clone() });
 
         let parse_task = self.file_manager.open_file(path.clone(), cx);
 

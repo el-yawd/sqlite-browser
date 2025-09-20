@@ -1,6 +1,159 @@
 use crate::models::{DatabaseHeader, DatabaseInfo, PageInfo};
 use gpui::{InteractiveElement, IntoElement, ParentElement, div, prelude::*, px, rgb};
 
+/// Validates page data for consistency and safety
+fn validate_page_data(page: &PageInfo, page_size: Option<usize>) -> Result<(), String> {
+    if let Some(size) = page_size {
+        if size == 0 {
+            return Err("Page size cannot be zero".to_string());
+        }
+        
+        let size_u16 = size as u16;
+        
+        if page.free_space > size_u16 {
+            return Err(format!(
+                "Free space ({} bytes) exceeds page size ({} bytes)", 
+                page.free_space, size
+            ));
+        }
+        
+        let total_overhead = page.free_space.saturating_add(page.fragmented_bytes as u16);
+        if total_overhead > size_u16 {
+            return Err(format!(
+                "Total overhead ({} bytes) exceeds page size ({} bytes)", 
+                total_overhead, size
+            ));
+        }
+    }
+    
+    Ok(())
+}
+
+/// Renders page details when there's invalid page data
+fn render_page_details_error(page: &PageInfo, error_message: &str) -> impl IntoElement {
+    let error_message = error_message.to_string();
+    div()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .text_color(rgb(0xffffff))
+        .child(
+            // Page header with color indicator
+            div()
+                .flex()
+                .items_center()
+                .gap_3()
+                .child(
+                    div()
+                        .size(px(16.0))
+                        .rounded_full()
+                        .bg(page.page_type.color()),
+                )
+                .child(
+                    div()
+                        .text_lg()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child(format!("Page {}", page.page_number)),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .justify_between()
+                .child(
+                    div()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child("Page Type:"),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(div().child(page.page_type.name()))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(0xaaaaaa))
+                                .child(format!("({})", page.page_type.short_name())),
+                        ),
+                ),
+        )
+        .child(
+            // Error message
+            div()
+                .p_3()
+                .rounded_md()
+                .bg(rgb(0x5d1a1a))
+                .border_1()
+                .border_color(rgb(0x991b1b))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(rgb(0xff4444))
+                                .child("⚠ Invalid Page Data"),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(0xfca5a5))
+                        .mt_2()
+                        .child(error_message.clone()),
+                ),
+        )
+        .child(
+            // Raw data section for debugging
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .mt_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(rgb(0xaaaaaa))
+                        .child("Raw Data:"),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .justify_between()
+                        .child(div().text_xs().text_color(rgb(0xcccccc)).child("Cell Count:"))
+                        .child(div().text_xs().text_color(rgb(0xcccccc)).child(format!("{}", page.cell_count))),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .justify_between()
+                        .child(div().text_xs().text_color(rgb(0xcccccc)).child("Free Space:"))
+                        .child(div().text_xs().text_color(rgb(0xcccccc)).child(format!("{} bytes", page.free_space))),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .justify_between()
+                        .child(div().text_xs().text_color(rgb(0xcccccc)).child("Fragmented:"))
+                        .child(div().text_xs().text_color(rgb(0xcccccc)).child(format!("{} bytes", page.fragmented_bytes))),
+                )
+                .when_some(page.rightmost_pointer, |this, ptr| {
+                    this.child(
+                        div()
+                            .flex()
+                            .justify_between()
+                            .child(div().text_xs().text_color(rgb(0xcccccc)).child("Right Pointer:"))
+                            .child(div().text_xs().text_color(rgb(0xcccccc)).child(format!("→ {}", ptr))),
+                    )
+                }),
+        )
+}
+
 pub fn render_header(
     database_path: Option<&std::path::Path>,
     page_count: usize,
@@ -162,17 +315,42 @@ pub fn render_sidebar(
 }
 
 pub fn render_page_details(page: &PageInfo, page_size: Option<usize>) -> impl IntoElement {
+    // Validate page data first
+    if let Err(validation_error) = validate_page_data(page, page_size) {
+        return render_page_details_error(page, &validation_error).into_any_element();
+    }
+    
+    // Safe calculation to prevent integer underflow
     let used_space = page_size
-        .map(|size| size as u16 - page.free_space)
+        .map(|size| {
+            let size_u16 = size as u16;
+            if page.free_space <= size_u16 {
+                size_u16 - page.free_space
+            } else {
+                // Handle invalid data gracefully - free space cannot exceed page size
+                0
+            }
+        })
         .unwrap_or(0);
+    
     let total_fragmented = page.fragmented_bytes as u16;
+    
+    // Safe efficiency calculation with bounds checking
     let efficiency = page_size
         .map(|size| {
-            let usable_space = size as u16 - page.free_space - total_fragmented;
-            if size > 0 {
-                (usable_space as f32 / size as f32) * 100.0
-            } else {
+            if size == 0 {
+                return 0.0;
+            }
+            
+            let size_u16 = size as u16;
+            let total_overhead = page.free_space.saturating_add(total_fragmented);
+            
+            if total_overhead >= size_u16 {
+                // Invalid data - overhead cannot exceed page size
                 0.0
+            } else {
+                let usable_space = size_u16 - total_overhead;
+                (usable_space as f32 / size as f32) * 100.0
             }
         })
         .unwrap_or(0.0);
@@ -275,7 +453,11 @@ pub fn render_page_details(page: &PageInfo, page_size: Option<usize>) -> impl In
                         .gap_2()
                         .child(div().child(format!("{} bytes", page.free_space)))
                         .when_some(page_size, |this, size| {
-                            let percentage = (page.free_space as f32 / size as f32) * 100.0;
+                            let percentage = if size > 0 {
+                                (page.free_space as f32 / size as f32) * 100.0
+                            } else {
+                                0.0
+                            };
                             this.child(
                                 div()
                                     .text_xs()
@@ -377,6 +559,7 @@ pub fn render_page_details(page: &PageInfo, page_size: Option<usize>) -> impl In
                     )),
             )
         })
+        .into_any_element()
 }
 
 pub fn render_database_info(header: &DatabaseHeader) -> impl IntoElement {
