@@ -1,4 +1,4 @@
-use gpui::{Context, IntoElement, ParentElement, div, prelude::*, rgb, px};
+use gpui::{Context, IntoElement, ParentElement, div, prelude::*, px, rgb};
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
@@ -123,8 +123,8 @@ impl StatusManager {
 
     /// Show an info message with auto-dismiss after 3 seconds
     pub fn show_info<T: 'static>(&mut self, content: String, cx: &mut Context<T>) {
-        let message = StatusMessage::new(content, StatusType::Info)
-            .with_auto_dismiss(Duration::from_secs(3));
+        let message =
+            StatusMessage::new(content, StatusType::Info).with_auto_dismiss(Duration::from_secs(3));
         self.show_message(message, cx);
     }
 
@@ -137,20 +137,23 @@ impl StatusManager {
 
     /// Show a warning message that requires user acknowledgment
     pub fn show_warning<T: 'static>(&mut self, content: String, cx: &mut Context<T>) {
-        let message = StatusMessage::new(content, StatusType::Warning)
-            .with_acknowledgment();
+        let message = StatusMessage::new(content, StatusType::Warning).with_acknowledgment();
         self.show_message(message, cx);
     }
 
     /// Show an error message that requires user acknowledgment
     pub fn show_error<T: 'static>(&mut self, content: String, cx: &mut Context<T>) {
-        let message = StatusMessage::new(content, StatusType::Error)
-            .with_acknowledgment();
+        let message = StatusMessage::new(content, StatusType::Error).with_acknowledgment();
         self.show_message(message, cx);
     }
 
     /// Show a progress message with a progress value (0.0 to 1.0)
-    pub fn show_progress<T: 'static>(&mut self, content: String, progress: f32, cx: &mut Context<T>) {
+    pub fn show_progress<T: 'static>(
+        &mut self,
+        content: String,
+        progress: f32,
+        cx: &mut Context<T>,
+    ) {
         let message = StatusMessage::new(content, StatusType::Progress(progress.clamp(0.0, 1.0)))
             .non_dismissible()
             .with_action(StatusAction::Cancel);
@@ -158,7 +161,12 @@ impl StatusManager {
     }
 
     /// Show a progress message without cancel button
-    pub fn show_progress_no_cancel<T: 'static>(&mut self, content: String, progress: f32, cx: &mut Context<T>) {
+    pub fn show_progress_no_cancel<T: 'static>(
+        &mut self,
+        content: String,
+        progress: f32,
+        cx: &mut Context<T>,
+    ) {
         let message = StatusMessage::new(content, StatusType::Progress(progress.clamp(0.0, 1.0)))
             .non_dismissible();
         self.show_message(message, cx);
@@ -166,11 +174,11 @@ impl StatusManager {
 
     /// Update the progress of the current progress message
     pub fn update_progress<T: 'static>(&mut self, progress: f32, cx: &mut Context<T>) {
-        if let Some(ref mut current) = self.current_message {
-            if let StatusType::Progress(_) = current.message_type {
-                current.message_type = StatusType::Progress(progress.clamp(0.0, 1.0));
-                cx.notify();
-            }
+        if let Some(ref mut current) = self.current_message
+            && let StatusType::Progress(_) = current.message_type
+        {
+            current.message_type = StatusType::Progress(progress.clamp(0.0, 1.0));
+            cx.notify();
         }
     }
 
@@ -186,11 +194,11 @@ impl StatusManager {
     /// Dismiss a specific message by ID
     pub fn dismiss_message_by_id<T: 'static>(&mut self, id: StatusId, cx: &mut Context<T>) {
         // Check if it's the current message
-        if let Some(ref current) = self.current_message {
-            if current.id == id {
-                self.dismiss_message(cx);
-                return;
-            }
+        if let Some(ref current) = self.current_message
+            && current.id == id
+        {
+            self.dismiss_message(cx);
+            return;
         }
 
         // Remove from queue if it's there
@@ -222,13 +230,13 @@ impl StatusManager {
     /// Internal method to display a message and set up auto-dismiss if needed
     fn display_message<T: 'static>(&mut self, message: StatusMessage, cx: &mut Context<T>) {
         let _message_id = message.id;
-        
+
         // TODO: Implement auto-dismiss functionality
         // For now, we'll skip auto-dismiss to keep the implementation simple
         if message.auto_dismiss_after.is_some() {
             // Auto-dismiss will be implemented in a future iteration
         }
-        
+
         self.current_message = Some(message);
         cx.notify();
     }
@@ -242,9 +250,9 @@ impl StatusManager {
 
     /// Render the current status message
     pub fn render(&self) -> Option<impl IntoElement> {
-        self.current_message.as_ref().map(|message| {
-            self.render_status_message(message)
-        })
+        self.current_message
+            .as_ref()
+            .map(|message| self.render_status_message(message))
     }
 
     /// Internal method to render a status message with appropriate styling
@@ -276,11 +284,12 @@ impl StatusManager {
                         div()
                             .text_sm()
                             .text_color(text_color)
-                            .child(message.content.clone())
+                            .child(message.content.clone()),
                     )
-                    .when_some(self.render_progress_bar(&message.message_type), |this, progress_bar| {
-                        this.child(progress_bar)
-                    })
+                    .when_some(
+                        self.render_progress_bar(&message.message_type),
+                        |this, progress_bar| this.child(progress_bar),
+                    ),
             )
             .child(
                 div()
@@ -300,14 +309,9 @@ impl StatusManager {
                                 .hover(|this| this.opacity(0.8))
                                 .cursor_pointer()
                                 .id(("status-dismiss", message.id.0))
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(rgb(0xffffff))
-                                        .child("✕")
-                                )
+                                .child(div().text_xs().text_color(rgb(0xffffff)).child("✕")),
                         )
-                    })
+                    }),
             )
     }
 
@@ -325,8 +329,8 @@ impl StatusManager {
                             .h_full()
                             .rounded_full()
                             .bg(rgb(0x3b82f6))
-                            .w(px(progress * 100.0))
-                    )
+                            .w(px(progress * 100.0)),
+                    ),
             )
         } else {
             None
@@ -356,7 +360,7 @@ impl StatusManager {
                     .text_xs()
                     .font_weight(gpui::FontWeight::MEDIUM)
                     .text_color(rgb(0xffffff))
-                    .child(text)
+                    .child(text),
             )
     }
 }
@@ -366,8 +370,7 @@ impl Default for StatusManager {
         Self::new()
     }
 }
-#
-[cfg(test)]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -386,15 +389,15 @@ mod tests {
     fn test_status_message_with_auto_dismiss() {
         let message = StatusMessage::new("Test message".to_string(), StatusType::Success)
             .with_auto_dismiss(Duration::from_secs(3));
-        
+
         assert_eq!(message.auto_dismiss_after, Some(Duration::from_secs(3)));
     }
 
     #[test]
     fn test_status_message_with_acknowledgment() {
-        let message = StatusMessage::new("Test message".to_string(), StatusType::Error)
-            .with_acknowledgment();
-        
+        let message =
+            StatusMessage::new("Test message".to_string(), StatusType::Error).with_acknowledgment();
+
         assert!(message.requires_acknowledgment);
         assert!(message.dismissible);
         assert!(message.auto_dismiss_after.is_none());

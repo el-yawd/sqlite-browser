@@ -4,8 +4,8 @@ use anyhow::Result;
 use gpui::{Context, EventEmitter, Task, Timer};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher, recommended_watcher};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, mpsc};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc as tokio_mpsc;
 
@@ -139,7 +139,7 @@ impl FileManager {
         T: EventEmitter<FileManagerEvent> + 'static,
     {
         let path_clone = path.clone();
-        
+
         // Create cancellation flag
         let cancel_flag = Arc::new(AtomicBool::new(false));
         self.current_parse_cancel = Some(cancel_flag.clone());
@@ -149,22 +149,25 @@ impl FileManager {
 
         cx.spawn(async move |entity, cx| {
             let parser = create_sqlite_parser();
-            
+
             // Simple parsing with progress indication
             let result = parser.parse_file(&path_clone);
-            
+
             // Emit completion events
-            let _ = entity.update(cx, |_this, cx| {
-                match &result {
-                    Ok(_) => {
-                        cx.emit(FileManagerEvent::ParseCompleted(path_clone.clone()));
-                    }
-                    Err(e) => {
-                        cx.emit(FileManagerEvent::ParseError(path_clone.clone(), e.to_string()));
-                    }
+            if let Err(error) = entity.update(cx, |_this, cx| match &result {
+                Ok(_) => {
+                    cx.emit(FileManagerEvent::ParseCompleted(path_clone.clone()));
                 }
-            });
-            
+                Err(e) => {
+                    cx.emit(FileManagerEvent::ParseError(
+                        path_clone.clone(),
+                        e.to_string(),
+                    ));
+                }
+            }) {
+                eprintln!("Failed to report parse completion: {error:#}");
+            }
+
             result
         })
     }
@@ -194,7 +197,12 @@ impl FileManager {
         self.try_start_watching(path, cx, 0)
     }
 
-    fn try_start_watching<T>(&mut self, path: &Path, cx: &mut Context<T>, attempt: u32) -> Result<()>
+    fn try_start_watching<T>(
+        &mut self,
+        path: &Path,
+        cx: &mut Context<T>,
+        attempt: u32,
+    ) -> Result<()>
     where
         T: EventEmitter<FileManagerEvent> + 'static,
     {
@@ -202,41 +210,50 @@ impl FileManager {
         let (async_tx, mut async_rx) = tokio_mpsc::unbounded_channel();
 
         // Try to create and configure watcher
-        let watcher_result = recommended_watcher(sync_tx)
-            .and_then(|mut w| {
-                w.watch(path, RecursiveMode::NonRecursive)?;
-                Ok(w)
-            });
+        let watcher_result = recommended_watcher(sync_tx).and_then(|mut w| {
+            w.watch(path, RecursiveMode::NonRecursive)?;
+            Ok(w)
+        });
 
         let watcher = match watcher_result {
             Ok(w) => w,
             Err(e) => {
                 if attempt < self.watcher_config.retry_attempts {
-                    eprintln!("Failed to start file watcher (attempt {}): {}", attempt + 1, e);
-                    
+                    eprintln!(
+                        "Failed to start file watcher (attempt {}): {}",
+                        attempt + 1,
+                        e
+                    );
+
                     // Schedule retry
                     let path_clone = path.to_path_buf();
                     let retry_delay = self.watcher_config.retry_delay;
                     let next_attempt = attempt + 1;
-                    
+
                     cx.spawn(async move |entity, cx| {
                         Timer::after(retry_delay).await;
                         // We can't call try_start_watching from here because we don't have access to self
                         // Instead, emit a retry event that the parent can handle
-                        let _ = entity.update(cx, |_this, cx| {
+                        if let Err(error) = entity.update(cx, |_this, cx| {
                             cx.emit(FileManagerEvent::WatchingFailed(
                                 path_clone,
-                                format!("Retrying file watching (attempt {})...", next_attempt + 1)
+                                format!("Retrying file watching (attempt {})...", next_attempt + 1),
                             ));
-                        });
-                    }).detach();
-                    
+                        }) {
+                            eprintln!("Failed to report file-watcher retry: {error:#}");
+                        }
+                    })
+                    .detach();
+
                     return Ok(());
                 } else {
                     self.watching_failed = true;
                     cx.emit(FileManagerEvent::WatchingFailed(
                         path.to_path_buf(),
-                        format!("Failed to start watching after {} attempts: {}", self.watcher_config.retry_attempts, e)
+                        format!(
+                            "Failed to start watching after {} attempts: {}",
+                            self.watcher_config.retry_attempts, e
+                        ),
                     ));
                     return Err(e.into());
                 }
@@ -263,7 +280,7 @@ impl FileManager {
         let path_clone = path.to_path_buf();
         let debounce_duration = self.watcher_config.debounce_duration;
         let _reload_timeout = self.watcher_config.reload_timeout;
-        
+
         cx.spawn(async move |entity, cx| {
             let parser = create_sqlite_parser();
             let mut last_event_time: Option<Instant> = None;
@@ -284,12 +301,12 @@ impl FileManager {
                                 ..
                             }) => {
                                 let now = Instant::now();
-                                
+
                                 // Debounce rapid file changes
-                                if let Some(last_time) = last_event_time {
-                                    if now.duration_since(last_time) < debounce_duration {
-                                        continue; // Skip this event, too soon after last one
-                                    }
+                                if let Some(last_time) = last_event_time
+                                    && now.duration_since(last_time) < debounce_duration
+                                {
+                                    continue; // Skip this event, too soon after last one
                                 }
                                 last_event_time = Some(now);
 
@@ -302,7 +319,7 @@ impl FileManager {
                                 match parse_result {
                                     Ok(database_info) => {
                                         consecutive_errors = 0; // Reset error count on success
-                                        
+
                                         // File was modified - emit event to update UI
                                         if entity.update(cx, |_this, cx| {
                                             eprintln!("File modified and reloaded: {}", path_clone.display());
@@ -318,7 +335,7 @@ impl FileManager {
                                     Err(e) => {
                                         consecutive_errors += 1;
                                         eprintln!("Parse error (attempt {}): {}", consecutive_errors, e);
-                                        
+
                                         // Emit parse error event
                                         if entity.update(cx, |_this, cx| {
                                             cx.emit(FileManagerEvent::ParseError(
@@ -364,7 +381,7 @@ impl FileManager {
                             Err(e) => {
                                 consecutive_errors += 1;
                                 eprintln!("File watcher error (attempt {}): {}", consecutive_errors, e);
-                                
+
                                 // If too many consecutive watcher errors, disable watching
                                 if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
                                     if entity.update(cx, |_this, cx| {
@@ -413,7 +430,10 @@ impl FileManager {
         self.watching_failed = false;
     }
 
-    pub fn refresh_current_file<T>(&mut self, cx: &mut Context<T>) -> Task<Result<Arc<DatabaseInfo>>>
+    pub fn refresh_current_file<T>(
+        &mut self,
+        cx: &mut Context<T>,
+    ) -> Task<Result<Arc<DatabaseInfo>>>
     where
         T: EventEmitter<FileManagerEvent> + 'static,
     {
@@ -432,7 +452,9 @@ impl FileManager {
         if !self.watching_failed {
             self.start_watching(path, cx)
         } else {
-            Err(anyhow::anyhow!("File watching has failed and cannot be retried"))
+            Err(anyhow::anyhow!(
+                "File watching has failed and cannot be retried"
+            ))
         }
     }
 
@@ -481,10 +503,14 @@ mod tests {
             enable_cancellation: false,
         };
 
-        let file_manager = FileManager::new_with_config(watcher_config.clone(), parse_config.clone());
+        let file_manager =
+            FileManager::new_with_config(watcher_config.clone(), parse_config.clone());
 
         assert_eq!(file_manager.watcher_config.retry_attempts, 5);
-        assert_eq!(file_manager.watcher_config.retry_delay, Duration::from_millis(1000));
+        assert_eq!(
+            file_manager.watcher_config.retry_delay,
+            Duration::from_millis(1000)
+        );
         assert_eq!(file_manager.parse_config.batch_size, 500);
         assert!(!file_manager.parse_config.enable_cancellation);
     }
@@ -504,17 +530,20 @@ mod tests {
     #[test]
     fn test_config_updates() {
         let mut file_manager = FileManager::new();
-        
+
         let new_watcher_config = WatcherConfig {
             retry_attempts: 10,
             retry_delay: Duration::from_millis(2000),
             debounce_duration: Duration::from_millis(300),
             reload_timeout: Duration::from_secs(5),
         };
-        
+
         file_manager.set_watcher_config(new_watcher_config.clone());
         assert_eq!(file_manager.watcher_config.retry_attempts, 10);
-        assert_eq!(file_manager.watcher_config.retry_delay, Duration::from_millis(2000));
+        assert_eq!(
+            file_manager.watcher_config.retry_delay,
+            Duration::from_millis(2000)
+        );
     }
 
     #[test]
@@ -534,15 +563,15 @@ mod tests {
     #[test]
     fn test_watching_state_management() {
         let mut file_manager = FileManager::new();
-        
+
         assert!(!file_manager.is_watching());
         assert!(!file_manager.has_watching_failed());
         assert!(!file_manager.is_parsing());
-        
+
         file_manager.mark_watching_failed();
         assert!(file_manager.has_watching_failed());
         assert!(!file_manager.is_watching());
-        
+
         file_manager.stop_watching_silent();
         assert!(!file_manager.has_watching_failed());
         assert!(!file_manager.is_watching());

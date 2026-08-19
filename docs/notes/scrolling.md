@@ -1,5 +1,7 @@
 # Scrolling Improvements for SQLite Browser
 
+**Status:** Historical implementation note; statements here are not acceptance evidence.
+
 ## Overview
 
 This document describes the scrolling improvements implemented to handle databases with many pages.

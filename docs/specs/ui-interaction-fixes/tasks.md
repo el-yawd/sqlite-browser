@@ -1,5 +1,7 @@
 # Implementation Plan
 
+**Status:** Active backlog. Checked items are historical claims until linked to validation evidence.
+
 - [x] 1. Implement StatusManager for centralized status messaging
   - Create StatusManager struct with message queue and auto-dismiss functionality
   - Implement StatusMessage model with different types (info, success, warning, error, progress)

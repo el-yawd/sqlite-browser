@@ -4,7 +4,7 @@ use crate::models::{DatabaseInfo, PageInfo};
 use crate::ui::entities::{
     FileDialogManager, FileOpenError, FileOpened, PageGrid, PageSelected, PageSidebar,
 };
-use crate::ui::status_manager::{StatusManager, StatusAction};
+use crate::ui::status_manager::{StatusAction, StatusManager};
 use anyhow::Result;
 use gpui::{
     Context, Entity, EventEmitter, FocusHandle, IntoElement, ParentElement, Render, Subscription,
@@ -145,12 +145,17 @@ impl SqliteBrowser {
         if let Err(e) = self.file_manager.start_watching(&path, cx) {
             eprintln!("Failed to start watching file: {}", e);
             self.status_manager.show_warning(
-                format!("Could not start watching {} for changes: {}", path.display(), e),
+                format!(
+                    "Could not start watching {} for changes: {}",
+                    path.display(),
+                    e
+                ),
                 cx,
             );
         }
 
-        self.status_manager.show_success(format!("Opened {}", path.display()), cx);
+        self.status_manager
+            .show_success(format!("Opened {}", path.display()), cx);
         cx.notify();
     }
 
@@ -160,8 +165,6 @@ impl SqliteBrowser {
             sidebar.set_selected_page(Some(page_number), cx);
         });
     }
-
-
 
     pub fn current_file_path(&self) -> Option<&std::path::Path> {
         self.file_manager.current_file()
@@ -197,13 +200,15 @@ impl SqliteBrowser {
         match event {
             FileManagerEvent::FileOpened(path, database_info) => {
                 self.database_info = Some(database_info.clone());
-                self.status_manager.show_success(format!("Opened {}", path.display()), cx);
+                self.status_manager
+                    .show_success(format!("Opened {}", path.display()), cx);
             }
             FileManagerEvent::FileModified(path, database_info) => {
                 self.database_info = Some(database_info.clone());
-                
+
                 // Update last modification time
-                self.file_manager.update_last_modification(std::time::Instant::now());
+                self.file_manager
+                    .update_last_modification(std::time::Instant::now());
 
                 // Update entities with new data
                 self.page_grid.update(cx, |grid, cx| {
@@ -231,14 +236,13 @@ impl SqliteBrowser {
                     sidebar.update_data(None, None, cx);
                 });
 
-                self.status_manager.show_error(format!("File {} was deleted", path.display()), cx);
+                self.status_manager
+                    .show_error(format!("File {} was deleted", path.display()), cx);
                 cx.notify();
             }
             FileManagerEvent::ParseError(path, error) => {
-                self.status_manager.show_error(
-                    format!("Error parsing {}: {}", path.display(), error),
-                    cx,
-                );
+                self.status_manager
+                    .show_error(format!("Error parsing {}: {}", path.display(), error), cx);
             }
             FileManagerEvent::WatchingStarted(path) => {
                 self.status_manager.show_info(
@@ -256,13 +260,20 @@ impl SqliteBrowser {
                 // Mark the file manager as failed and show error
                 self.file_manager.mark_watching_failed();
                 self.status_manager.show_error(
-                    format!("File watching failed for {}: {}. Manual refresh available.", path.display(), error),
+                    format!(
+                        "File watching failed for {}: {}. Manual refresh available.",
+                        path.display(),
+                        error
+                    ),
                     cx,
                 );
             }
             FileManagerEvent::ParseStarted(path) => {
                 self.status_manager.show_progress(
-                    format!("Loading {}...", path.file_name().and_then(|n| n.to_str()).unwrap_or("file")),
+                    format!(
+                        "Loading {}...",
+                        path.file_name().and_then(|n| n.to_str()).unwrap_or("file")
+                    ),
                     0.0,
                     cx,
                 );
@@ -275,7 +286,10 @@ impl SqliteBrowser {
             }
             FileManagerEvent::ParseCancelled(path) => {
                 self.status_manager.show_info(
-                    format!("Cancelled loading {}", path.file_name().and_then(|n| n.to_str()).unwrap_or("file")),
+                    format!(
+                        "Cancelled loading {}",
+                        path.file_name().and_then(|n| n.to_str()).unwrap_or("file")
+                    ),
                     cx,
                 );
             }
@@ -313,18 +327,20 @@ impl Render for SqliteBrowser {
 }
 
 impl SqliteBrowser {
-    fn render_status_with_handlers(&self, status_element: impl IntoElement, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_status_with_handlers(
+        &self,
+        status_element: impl IntoElement,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         // Add click handlers for dismiss and action buttons
-        div()
-            .child(status_element)
-            .on_mouse_down(
-                gpui::MouseButton::Left,
-                cx.listener(|this, _event, _window, cx| {
-                    // For now, just dismiss the message when clicked anywhere
-                    // In a real implementation, we'd need to check which element was clicked
-                    this.status_manager.dismiss_message(cx);
-                }),
-            )
+        div().child(status_element).on_mouse_down(
+            gpui::MouseButton::Left,
+            cx.listener(|this, _event, _window, cx| {
+                // For now, just dismiss the message when clicked anywhere
+                // In a real implementation, we'd need to check which element was clicked
+                this.status_manager.dismiss_message(cx);
+            }),
+        )
     }
 
     fn handle_status_action(&mut self, action: StatusAction, cx: &mut Context<Self>) {
@@ -354,7 +370,8 @@ impl SqliteBrowser {
     pub fn cancel_current_operation(&mut self, cx: &mut Context<Self>) {
         if self.file_manager.is_parsing() {
             self.file_manager.cancel_current_parse();
-            self.status_manager.show_info("Cancelling operation...".to_string(), cx);
+            self.status_manager
+                .show_info("Cancelling operation...".to_string(), cx);
         }
     }
 

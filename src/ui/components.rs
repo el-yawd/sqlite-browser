@@ -7,25 +7,25 @@ fn validate_page_data(page: &PageInfo, page_size: Option<usize>) -> Result<(), S
         if size == 0 {
             return Err("Page size cannot be zero".to_string());
         }
-        
+
         let size_u16 = size as u16;
-        
+
         if page.free_space > size_u16 {
             return Err(format!(
-                "Free space ({} bytes) exceeds page size ({} bytes)", 
+                "Free space ({} bytes) exceeds page size ({} bytes)",
                 page.free_space, size
             ));
         }
-        
+
         let total_overhead = page.free_space.saturating_add(page.fragmented_bytes as u16);
         if total_overhead > size_u16 {
             return Err(format!(
-                "Total overhead ({} bytes) exceeds page size ({} bytes)", 
+                "Total overhead ({} bytes) exceeds page size ({} bytes)",
                 total_overhead, size
             ));
         }
     }
-    
+
     Ok(())
 }
 
@@ -88,16 +88,12 @@ fn render_page_details_error(page: &PageInfo, error_message: &str) -> impl IntoE
                 .border_1()
                 .border_color(rgb(0x991b1b))
                 .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(rgb(0xff4444))
-                                .child("⚠ Invalid Page Data"),
-                        ),
+                    div().flex().items_center().gap_2().child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(0xff4444))
+                            .child("⚠ Invalid Page Data"),
+                    ),
                 )
                 .child(
                     div()
@@ -125,30 +121,70 @@ fn render_page_details_error(page: &PageInfo, error_message: &str) -> impl IntoE
                     div()
                         .flex()
                         .justify_between()
-                        .child(div().text_xs().text_color(rgb(0xcccccc)).child("Cell Count:"))
-                        .child(div().text_xs().text_color(rgb(0xcccccc)).child(format!("{}", page.cell_count))),
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(0xcccccc))
+                                .child("Cell Count:"),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(0xcccccc))
+                                .child(format!("{}", page.cell_count)),
+                        ),
                 )
                 .child(
                     div()
                         .flex()
                         .justify_between()
-                        .child(div().text_xs().text_color(rgb(0xcccccc)).child("Free Space:"))
-                        .child(div().text_xs().text_color(rgb(0xcccccc)).child(format!("{} bytes", page.free_space))),
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(0xcccccc))
+                                .child("Free Space:"),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(0xcccccc))
+                                .child(format!("{} bytes", page.free_space)),
+                        ),
                 )
                 .child(
                     div()
                         .flex()
                         .justify_between()
-                        .child(div().text_xs().text_color(rgb(0xcccccc)).child("Fragmented:"))
-                        .child(div().text_xs().text_color(rgb(0xcccccc)).child(format!("{} bytes", page.fragmented_bytes))),
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(0xcccccc))
+                                .child("Fragmented:"),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(0xcccccc))
+                                .child(format!("{} bytes", page.fragmented_bytes)),
+                        ),
                 )
                 .when_some(page.rightmost_pointer, |this, ptr| {
                     this.child(
                         div()
                             .flex()
                             .justify_between()
-                            .child(div().text_xs().text_color(rgb(0xcccccc)).child("Right Pointer:"))
-                            .child(div().text_xs().text_color(rgb(0xcccccc)).child(format!("→ {}", ptr))),
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(0xcccccc))
+                                    .child("Right Pointer:"),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(0xcccccc))
+                                    .child(format!("→ {}", ptr)),
+                            ),
                     )
                 }),
         )
@@ -319,32 +355,27 @@ pub fn render_page_details(page: &PageInfo, page_size: Option<usize>) -> impl In
     if let Err(validation_error) = validate_page_data(page, page_size) {
         return render_page_details_error(page, &validation_error).into_any_element();
     }
-    
+
     // Safe calculation to prevent integer underflow
     let used_space = page_size
         .map(|size| {
             let size_u16 = size as u16;
-            if page.free_space <= size_u16 {
-                size_u16 - page.free_space
-            } else {
-                // Handle invalid data gracefully - free space cannot exceed page size
-                0
-            }
+            size_u16.saturating_sub(page.free_space)
         })
         .unwrap_or(0);
-    
+
     let total_fragmented = page.fragmented_bytes as u16;
-    
+
     // Safe efficiency calculation with bounds checking
     let efficiency = page_size
         .map(|size| {
             if size == 0 {
                 return 0.0;
             }
-            
+
             let size_u16 = size as u16;
             let total_overhead = page.free_space.saturating_add(total_fragmented);
-            
+
             if total_overhead >= size_u16 {
                 // Invalid data - overhead cannot exceed page size
                 0.0
@@ -533,8 +564,7 @@ pub fn render_page_details(page: &PageInfo, page_size: Option<usize>) -> impl In
                                             } else {
                                                 rgb(0x4CAF50)
                                             })
-                                            .w(px((page.utilization_percent(size) / 100.0 * 50.0)
-                                                as f32)),
+                                            .w(px(page.utilization_percent(size) / 100.0 * 50.0)),
                                     ),
                             ),
                     ),

@@ -1,5 +1,9 @@
 # Requirements Document
 
+**Status:** Active
+
+Checked implementation claims require validation against `docs/specs/quality.md`.
+
 ## Introduction
 
 This feature addresses critical user interaction flaws in the SQLite file browser built with GPUI. After analyzing the codebase, several interaction issues have been identified that impact the user experience, including problems with page selection, file watching, error handling, and overall UI responsiveness. This specification will systematically address these issues to create a more robust and user-friendly SQLite browser.

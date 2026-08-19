@@ -2,8 +2,8 @@ use std::{collections::BTreeMap, sync::Arc, time::Instant};
 
 use crate::models::PageInfo;
 use gpui::{
-    Context, EventEmitter, IntoElement, ParentElement, Render, Window, div, prelude::*, px, rgb,
-    MouseDownEvent,
+    Context, EventEmitter, IntoElement, MouseDownEvent, ParentElement, Render, Window, div,
+    prelude::*, px, rgb,
 };
 
 #[derive(Clone, Debug)]
@@ -68,14 +68,16 @@ impl PageGrid {
     pub fn select_page(&mut self, page_number: u32, cx: &mut Context<Self>) {
         // Only update if the selection actually changed to prevent flickering
         if !self.selection_state.is_selected(page_number) {
-            self.selection_state.select_page(page_number, SelectionSource::Mouse);
+            self.selection_state
+                .select_page(page_number, SelectionSource::Mouse);
             cx.emit(PageSelected { page_number });
             cx.notify();
         }
     }
 
     pub fn select_page_programmatically(&mut self, page_number: u32, cx: &mut Context<Self>) {
-        self.selection_state.select_page(page_number, SelectionSource::Programmatic);
+        self.selection_state
+            .select_page(page_number, SelectionSource::Programmatic);
         cx.emit(PageSelected { page_number });
         cx.notify();
     }
@@ -94,16 +96,12 @@ impl Render for PageGrid {
             .flex_col()
             .min_h_0() // Allow shrinking
             .child(
-                div()
-                    .flex_1()
-                    .p_4()
-                    .overflow_hidden()
-                    .child(
-                        div()
-                            .id("page-grid-container")
-                            .h_full()
-                            .child(self.render_page_grid(cx))
-                    )
+                div().flex_1().p_4().overflow_hidden().child(
+                    div()
+                        .id("page-grid-container")
+                        .h_full()
+                        .child(self.render_page_grid(cx)),
+                ),
             )
     }
 }
@@ -113,31 +111,26 @@ impl PageGrid {
         let pages_per_row = 8; // Adjust based on container width
         let mut rows = Vec::new();
         let mut current_row = Vec::new();
-        
-        for (_, page) in self.pages.as_ref() {
+
+        for page in self.pages.values() {
             current_row.push(page.clone());
-            
+
             if current_row.len() >= pages_per_row {
                 rows.push(current_row.clone());
                 current_row.clear();
             }
         }
-        
+
         // Add remaining pages as the last row
         if !current_row.is_empty() {
             rows.push(current_row);
         }
 
-        let mut grid_container = div()
-            .id("page-grid")
-            .flex()
-            .flex_col()
-            .gap_2()
-            .max_h_full();
+        let mut grid_container = div().id("page-grid").flex().flex_col().gap_2().max_h_full();
 
         for row in rows {
             let mut row_div = div().flex().gap_2().justify_start();
-            
+
             for page in row {
                 let page_number = page.page_number;
                 let is_selected = self.selection_state.is_selected(page_number);
@@ -155,9 +148,7 @@ impl PageGrid {
                                 .opacity(1.0)
                         })
                         .when(!is_selected, |this| {
-                            this.border_1()
-                                .border_color(rgb(0x555555))
-                                .opacity(0.9)
+                            this.border_1().border_color(rgb(0x555555)).opacity(0.9)
                         })
                         .rounded_md()
                         .flex()
@@ -166,11 +157,7 @@ impl PageGrid {
                         .justify_center()
                         .cursor_pointer()
                         // Smooth hover transitions with enhanced visual feedback
-                        .hover(|this| {
-                            this.opacity(0.7)
-                                .border_2()
-                                .border_color(rgb(0xaaaaaa))
-                        })
+                        .hover(|this| this.opacity(0.7).border_2().border_color(rgb(0xaaaaaa)))
                         // Mouse event handlers for immediate selection feedback
                         .on_mouse_down(
                             gpui::MouseButton::Left,
@@ -194,7 +181,7 @@ impl PageGrid {
                         ),
                 );
             }
-            
+
             grid_container = grid_container.child(row_div);
         }
 

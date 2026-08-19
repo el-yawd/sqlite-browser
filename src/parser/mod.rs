@@ -2,14 +2,14 @@ pub mod sqlite_parser;
 
 use crate::models::DatabaseInfo;
 use anyhow::Result;
-use std::{path::Path, sync::Arc};
 use std::sync::atomic::AtomicBool;
+use std::{path::Path, sync::Arc};
 
-pub use sqlite_parser::{ProgressCallback, BatchParseConfig};
+pub use sqlite_parser::{BatchParseConfig, ProgressCallback};
 
 pub trait DatabaseParser {
     fn parse_file<P: AsRef<Path> + Send>(&self, path: P) -> Result<Arc<DatabaseInfo>>;
-    
+
     fn parse_file_with_progress<P: AsRef<Path> + Send>(
         &self,
         path: P,
@@ -25,7 +25,7 @@ impl DatabaseParser for SqliteParser {
     fn parse_file<P: AsRef<Path> + Send>(&self, path: P) -> Result<Arc<DatabaseInfo>> {
         sqlite_parser::parse_database_file(path.as_ref())
     }
-    
+
     fn parse_file_with_progress<P: AsRef<Path> + Send>(
         &self,
         path: P,

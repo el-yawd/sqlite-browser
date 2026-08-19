@@ -13,7 +13,7 @@ actions!(sqlite_browser, [OpenFile, RefreshDatabase]);
 fn main() {
     Application::new().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
-        cx.open_window(
+        if let Err(error) = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
@@ -34,7 +34,8 @@ fn main() {
                     browser
                 })
             },
-        )
-        .unwrap();
+        ) {
+            eprintln!("Failed to open the application window: {error:#}");
+        }
     });
 }

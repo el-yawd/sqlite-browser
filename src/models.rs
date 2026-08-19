@@ -153,15 +153,10 @@ impl PageInfo {
         if page_size == 0 {
             return 0.0;
         }
-        
+
         let size_u16 = page_size as u16;
-        let used_space = if self.free_space <= size_u16 {
-            size_u16 - self.free_space
-        } else {
-            // Handle invalid data gracefully - free space cannot exceed page size
-            0
-        };
-        
+        let used_space = size_u16.saturating_sub(self.free_space);
+
         (used_space as f32 / page_size as f32) * 100.0
     }
 }

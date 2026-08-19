@@ -64,19 +64,19 @@ pub fn parse_database_file_with_progress(
     // Parse pages in batches to avoid UI blocking
     for batch_start in (1..=total_pages).step_by(config.batch_size) {
         // Check for cancellation
-        if let Some(ref cancel) = cancel_flag {
-            if cancel.load(Ordering::Relaxed) {
-                return Err(anyhow::anyhow!("Parsing cancelled by user"));
-            }
+        if let Some(ref cancel) = cancel_flag
+            && cancel.load(Ordering::Relaxed)
+        {
+            return Err(anyhow::anyhow!("Parsing cancelled by user"));
         }
 
         let batch_end = (batch_start + config.batch_size - 1).min(total_pages);
-        
+
         // Parse batch of pages
         for page_num in batch_start..=batch_end {
             match parse_page(&mut file, page_num as u32, page_size, &header) {
                 Ok(page_info) => {
-                    let _ = pages.insert(page_num as u32, page_info);
+                    pages.insert(page_num as u32, page_info);
                 }
                 Err(e) => {
                     // Log error but continue parsing other pages

@@ -1,5 +1,7 @@
 # Design Document
 
+**Status:** Historical design; verify interfaces against current code before implementation.
+
 ## Overview
 
 This design document outlines the technical approach to fix critical UI interaction issues in the SQLite file browser built with GPUI. The solution focuses on improving page selection reliability, enhancing error handling, implementing robust file watching, optimizing UI responsiveness, and adding comprehensive status messaging and keyboard navigation support.

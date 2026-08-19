@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+if ! cargo flamegraph --help >/dev/null 2>&1; then
+    printf 'error: cargo-flamegraph is required; install it with: cargo install flamegraph\n' >&2
+    exit 1
+fi
+
+mkdir -p target/profiles
+output="target/profiles/flamegraph-$(date -u +%Y%m%dT%H%M%SZ).svg"
+
+if (( $# > 1 )); then
+    printf 'usage: script/profile [database]\n' >&2
+    exit 2
+fi
+
+if (( $# == 1 )); then
+    cargo flamegraph --output "$output" -- "$1"
+else
+    cargo flamegraph --output "$output"
+fi
+
+printf 'Profile written to %s\n' "$output"

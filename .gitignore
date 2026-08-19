@@ -1,1 +1,26 @@
-/target
+/target/
+
+# Local profiling and benchmark output
+perf.data*
+perf-*.map
+flamegraph*.svg
+profile*.json
+profile*.json.gz
+*.profraw
+*.profdata
+callgrind.out*
+
+# SQLite runtime files and ad-hoc databases
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Editor and operating-system state
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+for command in git cargo rustc rustfmt rustup; do
+    if ! command -v "$command" >/dev/null 2>&1; then
+        printf 'error: required command not found: %s\n' "$command" >&2
+        exit 1
+    fi
+done
+
+if ! rustup component list --installed | grep -q '^clippy-'; then
+    printf 'error: clippy is not installed; run: rustup component add clippy\n' >&2
+    exit 1
+fi
+
+cargo fetch --locked
+printf 'Toolchain and locked dependencies are ready.\n'
