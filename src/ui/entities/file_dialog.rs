@@ -166,6 +166,7 @@ impl Render for FileDialogManager {
                 )
                 .child(
                     div()
+                        .debug_selector(|| "file-dialog-open".to_string())
                         .px_6()
                         .py_3()
                         .bg(rgb(0x007acc))
@@ -235,6 +236,7 @@ impl Render for FileDialogManager {
                         .gap_4()
                         .child(
                             div()
+                                .debug_selector(|| "file-dialog-retry".to_string())
                                 .px_4()
                                 .py_2()
                                 .bg(rgb(0x007acc))
@@ -251,6 +253,7 @@ impl Render for FileDialogManager {
                         )
                         .child(
                             div()
+                                .debug_selector(|| "file-dialog-dismiss".to_string())
                                 .px_4()
                                 .py_2()
                                 .border_1()
@@ -274,5 +277,29 @@ impl Render for FileDialogManager {
 impl Default for FileDialogManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod interaction_tests {
+    use super::*;
+    use gpui::{Modifiers, TestAppContext};
+
+    #[gpui::test]
+    fn dismissing_an_error_returns_to_the_open_state(cx: &mut TestAppContext) {
+        let (dialog, cx) = cx.add_window_view(|_window, _cx| FileDialogManager::new());
+        dialog.update(cx, |dialog, cx| {
+            dialog.state = FileDialogState::Error("Invalid SQLite header".to_string());
+            cx.notify();
+        });
+        cx.update(|window, _cx| window.refresh());
+
+        let dismiss_bounds = cx
+            .debug_bounds("file-dialog-dismiss")
+            .expect("dismiss button should be rendered");
+        cx.simulate_click(dismiss_bounds.center(), Modifiers::default());
+
+        assert!(cx.read(|cx| matches!(dialog.read(cx).state(), FileDialogState::Idle)));
+        assert!(cx.debug_bounds("file-dialog-open").is_some());
     }
 }

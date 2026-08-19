@@ -470,3 +470,195 @@ impl SqliteBrowser {
             )
     }
 }
+
+#[cfg(test)]
+mod interaction_tests {
+    use super::*;
+    use crate::models::{DatabaseHeader, PageType};
+    use gpui::{Modifiers, ScrollDelta, ScrollWheelEvent, TestAppContext, point, px};
+
+    fn database_with_page_count(page_count: u32) -> Arc<DatabaseInfo> {
+        let header = DatabaseHeader {
+            magic: *b"SQLite format 3\0",
+            page_size: 4096,
+            file_format_write_version: 1,
+            file_format_read_version: 1,
+            reserved_space: 0,
+            max_embedded_payload_fraction: 64,
+            min_embedded_payload_fraction: 32,
+            leaf_payload_fraction: 32,
+            file_change_counter: 1,
+            database_size_pages: page_count,
+            first_freelist_trunk_page: 0,
+            total_freelist_pages: 0,
+            schema_cookie: 1,
+            schema_format_number: 4,
+            default_page_cache_size: 0,
+            largest_root_btree_page: 0,
+            text_encoding: 1,
+            user_version: 0,
+            incremental_vacuum_mode: 0,
+            application_id: 0,
+            version_valid_for: 1,
+            sqlite_version_number: 3_045_001,
+        };
+        let pages = (1..=page_count)
+            .map(|page_number| {
+                let page_type = if page_number % 2 == 0 {
+                    PageType::IndexBTreeLeaf
+                } else {
+                    PageType::TableBTreeLeaf
+                };
+                (
+                    page_number,
+                    PageInfo::new(page_number, page_type, 3, 2048, 0, None),
+                )
+            })
+            .collect();
+
+        Arc::new(DatabaseInfo::new(
+            header,
+            Arc::new(pages),
+            u64::from(page_count) * 4096,
+        ))
+    }
+
+    fn install_database(
+        browser: &Entity<SqliteBrowser>,
+        database: Arc<DatabaseInfo>,
+        cx: &mut TestAppContext,
+    ) {
+        browser.update(cx, |browser, cx| {
+            browser.database_info = Some(database.clone());
+            browser.page_grid.update(cx, |grid, cx| {
+                grid.update_pages(database.pages.clone(), cx);
+            });
+            browser.page_sidebar.update(cx, |sidebar, cx| {
+                sidebar.update_data(None, Some(database), cx);
+            });
+            cx.notify();
+        });
+    }
+
+    #[gpui::test]
+    fn clicking_a_rendered_page_updates_grid_and_sidebar(cx: &mut TestAppContext) {
+        let (browser, cx) = cx.add_window_view(|_window, cx| SqliteBrowser::new(cx));
+        install_database(&browser, database_with_page_count(2), cx);
+        cx.update(|window, _cx| window.refresh());
+
+        assert!(cx.debug_bounds("sidebar-empty").is_some());
+        let page_bounds = cx
+            .debug_bounds("page-2")
+            .expect("page 2 should be rendered");
+        cx.simulate_click(page_bounds.center(), Modifiers::default());
+
+        let (page_grid, page_sidebar) = cx.read(|cx| {
+            let browser = browser.read(cx);
+            (browser.page_grid.clone(), browser.page_sidebar.clone())
+        });
+        assert_eq!(
+            cx.read(|cx| page_grid.read(cx).get_selected_page()),
+            Some(2)
+        );
+        assert_eq!(cx.read(|cx| page_sidebar.read(cx).selected_page), Some(2));
+        assert!(cx.debug_bounds("sidebar-loaded").is_some());
+    }
+
+    #[gpui::test]
+    fn clicking_an_error_status_message_dismisses_it(cx: &mut TestAppContext) {
+        let (browser, cx) = cx.add_window_view(|_window, cx| SqliteBrowser::new(cx));
+        browser.update(cx, |browser, cx| {
+            browser
+                .status_manager
+                .show_error("Invalid database".to_string(), cx);
+        });
+        cx.update(|window, _cx| window.refresh());
+
+        let status_bounds = cx
+            .debug_bounds("status-message")
+            .expect("error status should be rendered");
+        cx.simulate_click(status_bounds.center(), Modifiers::default());
+
+        assert!(cx.read(|cx| browser.read(cx).status_manager.current_message().is_none()));
+    }
+
+    #[gpui::test]
+    #[ignore = "known issue: clicking a non-dismissible progress message dismisses it"]
+    fn progress_status_cannot_be_dismissed_by_clicking_its_body(cx: &mut TestAppContext) {
+        let (browser, cx) = cx.add_window_view(|_window, cx| SqliteBrowser::new(cx));
+        browser.update(cx, |browser, cx| {
+            browser
+                .status_manager
+                .show_progress("Loading database".to_string(), 0.5, cx);
+        });
+        cx.update(|window, _cx| window.refresh());
+
+        let status_bounds = cx
+            .debug_bounds("status-message")
+            .expect("progress status should be rendered");
+        cx.simulate_click(status_bounds.center(), Modifiers::default());
+
+        assert!(cx.read(|cx| browser.read(cx).status_manager.current_message().is_some()));
+    }
+
+    #[gpui::test]
+    #[ignore = "known issue: success and info messages never auto-dismiss"]
+    fn success_status_auto_dismisses_after_three_seconds(cx: &mut TestAppContext) {
+        let (browser, cx) = cx.add_window_view(|_window, cx| SqliteBrowser::new(cx));
+        browser.update(cx, |browser, cx| {
+            browser
+                .status_manager
+                .show_success("Database opened".to_string(), cx);
+        });
+
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(4));
+        cx.run_until_parked();
+
+        assert!(cx.read(|cx| browser.read(cx).status_manager.current_message().is_none()));
+    }
+
+    #[gpui::test]
+    #[ignore = "known issue: the page grid has no keyboard navigation"]
+    fn right_arrow_selects_the_first_page(cx: &mut TestAppContext) {
+        let (browser, cx) = cx.add_window_view(|_window, cx| SqliteBrowser::new(cx));
+        install_database(&browser, database_with_page_count(2), cx);
+        cx.update(|window, _cx| window.refresh());
+
+        cx.simulate_keystrokes("right");
+
+        let page_grid = cx.read(|cx| browser.read(cx).page_grid.clone());
+        assert_eq!(
+            cx.read(|cx| page_grid.read(cx).get_selected_page()),
+            Some(1)
+        );
+    }
+
+    #[gpui::test]
+    #[ignore = "known issue: overflow_hidden clips the page grid instead of scrolling it"]
+    fn scrolling_moves_later_pages_into_view(cx: &mut TestAppContext) {
+        let (browser, cx) = cx.add_window_view(|_window, cx| SqliteBrowser::new(cx));
+        install_database(&browser, database_with_page_count(200), cx);
+        cx.update(|window, _cx| window.refresh());
+
+        let container = cx
+            .debug_bounds("page-grid-container")
+            .expect("page grid should be rendered");
+        let before = cx
+            .debug_bounds("page-200")
+            .expect("last page should be laid out");
+        cx.simulate_event(ScrollWheelEvent {
+            position: container.center(),
+            delta: ScrollDelta::Pixels(point(px(0.0), px(-5000.0))),
+            ..Default::default()
+        });
+        let after = cx
+            .debug_bounds("page-200")
+            .expect("last page should remain laid out");
+
+        assert!(
+            after.origin.y < before.origin.y,
+            "scrolling should move later pages toward the visible grid"
+        );
+    }
+}

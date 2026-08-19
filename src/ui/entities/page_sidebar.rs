@@ -92,6 +92,7 @@ impl PageSidebar {
 
     fn render_loading_indicator(&self) -> impl IntoElement {
         div()
+            .debug_selector(|| "sidebar-loading".to_string())
             .flex()
             .items_center()
             .justify_center()
@@ -114,6 +115,7 @@ impl PageSidebar {
 
     fn render_error_state(&self, error: String) -> impl IntoElement {
         div()
+            .debug_selector(|| "sidebar-error".to_string())
             .flex()
             .flex_col()
             .items_center()
@@ -136,11 +138,17 @@ impl PageSidebar {
     }
 
     fn render_empty_state(&self) -> impl IntoElement {
-        div().flex().items_center().justify_center().p_4().child(
-            div()
-                .text_color(rgb(0xaaaaaa))
-                .child("Select a page to view details"),
-        )
+        div()
+            .debug_selector(|| "sidebar-empty".to_string())
+            .flex()
+            .items_center()
+            .justify_center()
+            .p_4()
+            .child(
+                div()
+                    .text_color(rgb(0xaaaaaa))
+                    .child("Select a page to view details"),
+            )
     }
 }
 
@@ -175,6 +183,7 @@ impl Render for PageSidebar {
                                 self.render_loading_indicator().into_any_element()
                             }
                             SidebarState::Loaded(page_info) => div()
+                                .debug_selector(|| "sidebar-loaded".to_string())
                                 .p_4()
                                 .max_h_full()
                                 .child(components::render_page_details(

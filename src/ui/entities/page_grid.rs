@@ -99,6 +99,7 @@ impl Render for PageGrid {
                 div().flex_1().p_4().overflow_hidden().child(
                     div()
                         .id("page-grid-container")
+                        .debug_selector(|| "page-grid-container".to_string())
                         .h_full()
                         .child(self.render_page_grid(cx)),
                 ),
@@ -139,6 +140,7 @@ impl PageGrid {
                     div()
                         .size(px(80.0))
                         .id(("page", page_number))
+                        .debug_selector(|| format!("page-{page_number}"))
                         .bg(page.page_type.color())
                         // Enhanced selection visual feedback with immediate response
                         .when(is_selected, |this| {

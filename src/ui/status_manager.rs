@@ -266,6 +266,7 @@ impl StatusManager {
         };
 
         div()
+            .debug_selector(|| "status-message".to_string())
             .p_3()
             .m_2()
             .rounded_md()

@@ -1879,6 +1879,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07e28edb80900c19c28f1072f2e8aeca7fa06b23cd4169cefe1af5aa3260783f"
 
 [[package]]
+name = "git2"
+version = "0.20.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b88256088d75a56f8ecfa070513a775dd9107f6530ef14919dac831af9cfe2b"
+dependencies = [
+ "bitflags 2.9.1",
+ "libc",
+ "libgit2-sys",
+ "log",
+ "url",
+]
+
+[[package]]
 name = "glob"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1948,6 +1961,7 @@ dependencies = [
  "as-raw-xcb-connection",
  "ashpd 0.11.0",
  "async-task",
+ "backtrace",
  "bindgen",
  "blade-graphics",
  "blade-macros",
@@ -2562,6 +2576,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "libgit2-sys"
+version = "0.18.7+1.9.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23c7391e4b9f4ffab1a624223cc1d7385ff9a678f490768add717de7ea2f4d89"
+dependencies = [
+ "cc",
+ "libc",
+ "libz-sys",
+ "pkg-config",
+]
+
+[[package]]
 name = "libloading"
 version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2586,6 +2612,18 @@ dependencies = [
  "bitflags 2.9.1",
  "libc",
  "redox_syscall",
+]
+
+[[package]]
+name = "libz-sys"
+version = "1.1.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85bc9657773828b90eeb625adff10eeac83cc21bbfd8e23a03eaa8a33c9e28d9"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
+ "vcpkg",
 ]
 
 [[package]]
@@ -5072,11 +5110,13 @@ dependencies = [
  "dunce",
  "futures",
  "futures-lite 1.13.0",
+ "git2",
  "globset",
  "itertools 0.14.0",
  "libc",
  "log",
  "nix 0.29.0",
+ "rand 0.8.5",
  "regex",
  "rust-embed",
  "serde",
@@ -5088,7 +5128,18 @@ dependencies = [
  "tempfile",
  "tendril",
  "unicase",
+ "util_macros",
  "walkdir",
+ "workspace-hack",
+]
+
+[[package]]
+name = "util_macros"
+version = "0.1.0"
+source = "git+https://github.com/zed-industries/zed#aabce921e321efa9c9b14d68367d69a0c43c175b"
+dependencies = [
+ "quote",
+ "syn 2.0.103",
  "workspace-hack",
 ]
 
@@ -5151,6 +5202,12 @@ dependencies = [
  "sval_ref",
  "sval_serde",
 ]
+
+[[package]]
+name = "vcpkg"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "version-compare"
