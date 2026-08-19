@@ -64,7 +64,8 @@ pub fn parse_database_file_with_progress(
     // Parse pages in batches to avoid UI blocking
     for batch_start in (1..=total_pages).step_by(config.batch_size) {
         // Check for cancellation
-        if let Some(ref cancel) = cancel_flag
+        if config.enable_cancellation
+            && let Some(ref cancel) = cancel_flag
             && cancel.load(Ordering::Relaxed)
         {
             return Err(anyhow::anyhow!("Parsing cancelled by user"));

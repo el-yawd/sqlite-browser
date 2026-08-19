@@ -101,7 +101,10 @@ impl StatusMessage {
 pub struct StatusManager {
     message_queue: VecDeque<StatusMessage>,
     current_message: Option<StatusMessage>,
-    // TODO: Add auto_dismiss_tasks in future iteration
+}
+
+pub trait StatusHost: Sized {
+    fn status_manager(&mut self) -> &mut StatusManager;
 }
 
 impl StatusManager {
@@ -113,7 +116,11 @@ impl StatusManager {
     }
 
     /// Show a status message immediately or queue it if another message is currently displayed
-    pub fn show_message<T: 'static>(&mut self, message: StatusMessage, cx: &mut Context<T>) {
+    pub fn show_message<T: StatusHost + 'static>(
+        &mut self,
+        message: StatusMessage,
+        cx: &mut Context<T>,
+    ) {
         if self.current_message.is_none() {
             self.display_message(message, cx);
         } else {
@@ -122,33 +129,33 @@ impl StatusManager {
     }
 
     /// Show an info message with auto-dismiss after 3 seconds
-    pub fn show_info<T: 'static>(&mut self, content: String, cx: &mut Context<T>) {
+    pub fn show_info<T: StatusHost + 'static>(&mut self, content: String, cx: &mut Context<T>) {
         let message =
             StatusMessage::new(content, StatusType::Info).with_auto_dismiss(Duration::from_secs(3));
         self.show_message(message, cx);
     }
 
     /// Show a success message with auto-dismiss after 3 seconds
-    pub fn show_success<T: 'static>(&mut self, content: String, cx: &mut Context<T>) {
+    pub fn show_success<T: StatusHost + 'static>(&mut self, content: String, cx: &mut Context<T>) {
         let message = StatusMessage::new(content, StatusType::Success)
             .with_auto_dismiss(Duration::from_secs(3));
         self.show_message(message, cx);
     }
 
     /// Show a warning message that requires user acknowledgment
-    pub fn show_warning<T: 'static>(&mut self, content: String, cx: &mut Context<T>) {
+    pub fn show_warning<T: StatusHost + 'static>(&mut self, content: String, cx: &mut Context<T>) {
         let message = StatusMessage::new(content, StatusType::Warning).with_acknowledgment();
         self.show_message(message, cx);
     }
 
     /// Show an error message that requires user acknowledgment
-    pub fn show_error<T: 'static>(&mut self, content: String, cx: &mut Context<T>) {
+    pub fn show_error<T: StatusHost + 'static>(&mut self, content: String, cx: &mut Context<T>) {
         let message = StatusMessage::new(content, StatusType::Error).with_acknowledgment();
         self.show_message(message, cx);
     }
 
     /// Show a progress message with a progress value (0.0 to 1.0)
-    pub fn show_progress<T: 'static>(
+    pub fn show_progress<T: StatusHost + 'static>(
         &mut self,
         content: String,
         progress: f32,
@@ -161,7 +168,7 @@ impl StatusManager {
     }
 
     /// Show a progress message without cancel button
-    pub fn show_progress_no_cancel<T: 'static>(
+    pub fn show_progress_no_cancel<T: StatusHost + 'static>(
         &mut self,
         content: String,
         progress: f32,
@@ -183,7 +190,7 @@ impl StatusManager {
     }
 
     /// Manually dismiss the current message
-    pub fn dismiss_message<T: 'static>(&mut self, cx: &mut Context<T>) {
+    pub fn dismiss_message<T: StatusHost + 'static>(&mut self, cx: &mut Context<T>) {
         if let Some(_current) = self.current_message.take() {
             // Show next message in queue
             self.show_next_message(cx);
@@ -192,7 +199,11 @@ impl StatusManager {
     }
 
     /// Dismiss a specific message by ID
-    pub fn dismiss_message_by_id<T: 'static>(&mut self, id: StatusId, cx: &mut Context<T>) {
+    pub fn dismiss_message_by_id<T: StatusHost + 'static>(
+        &mut self,
+        id: StatusId,
+        cx: &mut Context<T>,
+    ) {
         // Check if it's the current message
         if let Some(ref current) = self.current_message
             && current.id == id
@@ -206,7 +217,7 @@ impl StatusManager {
     }
 
     /// Clear all messages (current and queued)
-    pub fn clear_all<T: 'static>(&mut self, cx: &mut Context<T>) {
+    pub fn clear_all<T: StatusHost + 'static>(&mut self, cx: &mut Context<T>) {
         self.current_message = None;
         self.message_queue.clear();
         cx.notify();
@@ -228,21 +239,32 @@ impl StatusManager {
     }
 
     /// Internal method to display a message and set up auto-dismiss if needed
-    fn display_message<T: 'static>(&mut self, message: StatusMessage, cx: &mut Context<T>) {
-        let _message_id = message.id;
-
-        // TODO: Implement auto-dismiss functionality
-        // For now, we'll skip auto-dismiss to keep the implementation simple
-        if message.auto_dismiss_after.is_some() {
-            // Auto-dismiss will be implemented in a future iteration
-        }
-
+    fn display_message<T: StatusHost + 'static>(
+        &mut self,
+        message: StatusMessage,
+        cx: &mut Context<T>,
+    ) {
+        let message_id = message.id;
+        let auto_dismiss_after = message.auto_dismiss_after;
         self.current_message = Some(message);
         cx.notify();
+
+        if let Some(duration) = auto_dismiss_after {
+            let timer = cx.background_executor().timer(duration);
+            cx.spawn(async move |entity, cx| {
+                timer.await;
+                if let Err(error) = entity.update(cx, |host, cx| {
+                    host.status_manager().dismiss_message_by_id(message_id, cx);
+                }) {
+                    eprintln!("Failed to auto-dismiss status message: {error:#}");
+                }
+            })
+            .detach();
+        }
     }
 
     /// Internal method to show the next message in the queue
-    fn show_next_message<T: 'static>(&mut self, cx: &mut Context<T>) {
+    fn show_next_message<T: StatusHost + 'static>(&mut self, cx: &mut Context<T>) {
         if let Some(next_message) = self.message_queue.pop_front() {
             self.display_message(next_message, cx);
         }
@@ -292,28 +314,6 @@ impl StatusManager {
                         |this, progress_bar| this.child(progress_bar),
                     ),
             )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .when_some(message.action.as_ref(), |this, action| {
-                        this.child(self.render_action_button(action))
-                    })
-                    .when(message.dismissible, |this| {
-                        this.child(
-                            div()
-                                .px_2()
-                                .py_1()
-                                .rounded_sm()
-                                .bg(border_color)
-                                .hover(|this| this.opacity(0.8))
-                                .cursor_pointer()
-                                .id(("status-dismiss", message.id.0))
-                                .child(div().text_xs().text_color(rgb(0xffffff)).child("✕")),
-                        )
-                    }),
-            )
     }
 
     /// Render progress bar for progress messages
@@ -339,7 +339,7 @@ impl StatusManager {
     }
 
     /// Render action button for messages with actions
-    fn render_action_button(&self, action: &StatusAction) -> impl IntoElement {
+    pub fn render_action_button(&self, action: &StatusAction) -> impl IntoElement {
         let (text, color) = match action {
             StatusAction::Retry => ("Retry", rgb(0x3b82f6)),
             StatusAction::Dismiss => ("Dismiss", rgb(0x6b7280)),
@@ -356,6 +356,7 @@ impl StatusManager {
             .hover(|this| this.opacity(0.8))
             .cursor_pointer()
             .id(("status-action", action.as_u32()))
+            .debug_selector(|| "status-action".to_string())
             .child(
                 div()
                     .text_xs()
@@ -363,6 +364,18 @@ impl StatusManager {
                     .text_color(rgb(0xffffff))
                     .child(text),
             )
+    }
+
+    pub fn render_dismiss_button(&self) -> impl IntoElement {
+        div()
+            .debug_selector(|| "status-dismiss".to_string())
+            .px_2()
+            .py_1()
+            .rounded_sm()
+            .bg(rgb(0x6b7280))
+            .hover(|this| this.opacity(0.8))
+            .cursor_pointer()
+            .child(div().text_xs().text_color(rgb(0xffffff)).child("✕"))
     }
 }
 

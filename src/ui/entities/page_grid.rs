@@ -2,8 +2,8 @@ use std::{collections::BTreeMap, sync::Arc, time::Instant};
 
 use crate::models::PageInfo;
 use gpui::{
-    Context, EventEmitter, IntoElement, MouseDownEvent, ParentElement, Render, Window, div,
-    prelude::*, px, rgb,
+    Context, EventEmitter, IntoElement, MouseDownEvent, ParentElement, Render, ScrollHandle,
+    Window, div, prelude::*, px, rgb,
 };
 
 #[derive(Clone, Debug)]
@@ -48,6 +48,7 @@ impl SelectionState {
 pub struct PageGrid {
     pages: Arc<BTreeMap<u32, PageInfo>>,
     selection_state: SelectionState,
+    scroll_handle: ScrollHandle,
 }
 
 impl EventEmitter<PageSelected> for PageGrid {}
@@ -57,6 +58,7 @@ impl PageGrid {
         Self {
             pages,
             selection_state: SelectionState::new(),
+            scroll_handle: ScrollHandle::new(),
         }
     }
 
@@ -82,6 +84,46 @@ impl PageGrid {
         cx.notify();
     }
 
+    pub fn select_relative(&mut self, offset: isize, cx: &mut Context<Self>) {
+        let page_numbers = self.pages.keys().copied().collect::<Vec<_>>();
+        if page_numbers.is_empty() {
+            return;
+        }
+
+        let current_index = self
+            .selection_state
+            .selected_page
+            .and_then(|selected| page_numbers.iter().position(|page| *page == selected));
+        let target_index = current_index.map_or(0, |index| {
+            index
+                .saturating_add_signed(offset)
+                .min(page_numbers.len().saturating_sub(1))
+        });
+        let Some(page_number) = page_numbers.get(target_index).copied() else {
+            return;
+        };
+
+        self.selection_state
+            .select_page(page_number, SelectionSource::Keyboard);
+        cx.emit(PageSelected { page_number });
+        cx.notify();
+
+        let row = target_index / 8;
+        let row_height = 88.0;
+        let viewport_height = self.scroll_handle.bounds().size.height.0;
+        let current_offset = self.scroll_handle.offset().y.0;
+        let row_top = row as f32 * row_height + current_offset;
+        let row_bottom = row_top + 80.0;
+        if row_top < 0.0 {
+            self.scroll_handle
+                .set_offset(gpui::point(px(0.0), px(-(row as f32 * row_height))));
+        } else if row_bottom > viewport_height {
+            let offset = row as f32 * row_height - viewport_height + 80.0;
+            self.scroll_handle
+                .set_offset(gpui::point(px(0.0), px(-offset)));
+        }
+    }
+
     pub fn get_selected_page(&self) -> Option<u32> {
         self.selection_state.selected_page
     }
@@ -96,13 +138,15 @@ impl Render for PageGrid {
             .flex_col()
             .min_h_0() // Allow shrinking
             .child(
-                div().flex_1().p_4().overflow_hidden().child(
-                    div()
-                        .id("page-grid-container")
-                        .debug_selector(|| "page-grid-container".to_string())
-                        .h_full()
-                        .child(self.render_page_grid(cx)),
-                ),
+                div()
+                    .id("page-grid-container")
+                    .debug_selector(|| "page-grid-container".to_string())
+                    .flex_1()
+                    .min_h_0()
+                    .p_4()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll_handle)
+                    .child(self.render_page_grid(cx)),
             )
     }
 }
@@ -127,7 +171,7 @@ impl PageGrid {
             rows.push(current_row);
         }
 
-        let mut grid_container = div().id("page-grid").flex().flex_col().gap_2().max_h_full();
+        let mut grid_container = div().id("page-grid").flex().flex_col().gap_2();
 
         for row in rows {
             let mut row_div = div().flex().gap_2().justify_start();

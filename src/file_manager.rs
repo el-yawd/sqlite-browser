@@ -1,5 +1,5 @@
 use crate::models::DatabaseInfo;
-use crate::parser::{DatabaseParser, create_sqlite_parser};
+use crate::parser::{BatchParseConfig, DatabaseParser, create_sqlite_parser};
 use anyhow::Result;
 use gpui::{Context, EventEmitter, Task, Timer};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher, recommended_watcher};
@@ -17,11 +17,26 @@ pub enum FileManagerEvent {
     ParseError(PathBuf, String),
     WatchingStarted(PathBuf),
     WatchingStopped(PathBuf),
+    WatchingRetry(PathBuf, u32),
     WatchingFailed(PathBuf, String),
     ParseProgress(PathBuf, f32),
     ParseStarted(PathBuf),
     ParseCompleted(PathBuf),
     ParseCancelled(PathBuf),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ParseOperationError {
+    #[error("Parsing was cancelled")]
+    Cancelled,
+    #[error("Parsing result was superseded by a newer request")]
+    Superseded,
+}
+
+struct ParseOperation {
+    cancel_flag: Arc<AtomicBool>,
+    finished: Arc<AtomicBool>,
+    user_cancellable: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -67,7 +82,9 @@ pub struct FileManager {
     parse_config: ParseConfig,
     last_modification: Option<Instant>,
     watching_failed: bool,
-    current_parse_cancel: Option<Arc<AtomicBool>>,
+    current_parse: Option<ParseOperation>,
+    parse_generation: Arc<std::sync::atomic::AtomicU64>,
+    watcher_generation: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl FileManager {
@@ -79,7 +96,9 @@ impl FileManager {
             parse_config: ParseConfig::default(),
             last_modification: None,
             watching_failed: false,
-            current_parse_cancel: None,
+            current_parse: None,
+            parse_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            watcher_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
@@ -91,7 +110,9 @@ impl FileManager {
             parse_config,
             last_modification: None,
             watching_failed: false,
-            current_parse_cancel: None,
+            current_parse: None,
+            parse_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            watcher_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
@@ -139,47 +160,96 @@ impl FileManager {
         T: EventEmitter<FileManagerEvent> + 'static,
     {
         let path_clone = path.clone();
-
-        // Create cancellation flag
+        self.cancel_current_parse();
+        let parse_id = self.parse_generation.fetch_add(1, Ordering::Relaxed) + 1;
         let cancel_flag = Arc::new(AtomicBool::new(false));
-        self.current_parse_cancel = Some(cancel_flag.clone());
-
-        // Emit parse started event
+        let finished = Arc::new(AtomicBool::new(false));
+        let parse_config = self.parse_config.clone();
+        self.current_parse = Some(ParseOperation {
+            cancel_flag: cancel_flag.clone(),
+            finished: finished.clone(),
+            user_cancellable: parse_config.enable_cancellation,
+        });
+        let timeout = cx.background_executor().timer(parse_config.max_parse_time);
+        let parse_generation = self.parse_generation.clone();
         cx.emit(FileManagerEvent::ParseStarted(path.clone()));
 
-        cx.spawn(async move |entity, cx| {
-            let parser = create_sqlite_parser();
-
-            // Simple parsing with progress indication
-            let result = parser.parse_file(&path_clone);
-
-            // Emit completion events
-            if let Err(error) = entity.update(cx, |_this, cx| match &result {
-                Ok(_) => {
-                    cx.emit(FileManagerEvent::ParseCompleted(path_clone.clone()));
-                }
-                Err(e) => {
-                    cx.emit(FileManagerEvent::ParseError(
-                        path_clone.clone(),
-                        e.to_string(),
-                    ));
-                }
-            }) {
-                eprintln!("Failed to report parse completion: {error:#}");
+        let parse_task = cx.background_executor().spawn({
+            let cancel_flag = cancel_flag.clone();
+            let path = path_clone.clone();
+            async move {
+                let parser = create_sqlite_parser();
+                parser.parse_file_with_progress(
+                    path,
+                    None,
+                    Some(cancel_flag),
+                    Some(BatchParseConfig {
+                        batch_size: parse_config.batch_size,
+                        enable_cancellation: true,
+                        ..BatchParseConfig::default()
+                    }),
+                )
             }
+        });
 
+        cx.spawn(async move |entity, cx| {
+            let (result, timed_out) = tokio::select! {
+                result = parse_task => (result, false),
+                () = timeout => {
+                    cancel_flag.store(true, Ordering::Relaxed);
+                    (
+                        Err(anyhow::anyhow!(
+                            "Parsing exceeded the configured time limit"
+                        )),
+                        true,
+                    )
+                }
+            };
+            let was_cancelled = cancel_flag.load(Ordering::Relaxed);
+            let is_current = parse_generation.load(Ordering::Relaxed) == parse_id;
+            finished.store(true, Ordering::Relaxed);
+            entity.update(cx, |_this, cx| {
+                if is_current {
+                    if was_cancelled && !timed_out {
+                        cx.emit(FileManagerEvent::ParseCancelled(path_clone.clone()));
+                    } else {
+                        match &result {
+                            Ok(_) => {
+                                cx.emit(FileManagerEvent::ParseCompleted(path_clone.clone()));
+                            }
+                            Err(error) => {
+                                cx.emit(FileManagerEvent::ParseError(
+                                    path_clone.clone(),
+                                    error.to_string(),
+                                ));
+                            }
+                        }
+                    }
+                }
+            })?;
+
+            if !is_current {
+                return Err(ParseOperationError::Superseded.into());
+            }
+            if was_cancelled && !timed_out {
+                return Err(ParseOperationError::Cancelled.into());
+            }
             result
         })
     }
 
     pub fn cancel_current_parse(&mut self) {
-        if let Some(ref cancel_flag) = self.current_parse_cancel {
-            cancel_flag.store(true, Ordering::Relaxed);
+        if let Some(operation) = &self.current_parse
+            && operation.user_cancellable
+        {
+            operation.cancel_flag.store(true, Ordering::Relaxed);
         }
     }
 
     pub fn is_parsing(&self) -> bool {
-        self.current_parse_cancel.is_some()
+        self.current_parse
+            .as_ref()
+            .is_some_and(|operation| !operation.finished.load(Ordering::Relaxed))
     }
 
     pub fn set_current_file(&mut self, path: Option<PathBuf>) {
@@ -192,12 +262,13 @@ impl FileManager {
     {
         // Reset failure state
         self.watching_failed = false;
+        self.watcher_generation.fetch_add(1, Ordering::Relaxed);
 
         // Try to start watching with retry logic
         self.try_start_watching(path, cx, 0)
     }
 
-    fn try_start_watching<T>(
+    pub(crate) fn try_start_watching<T>(
         &mut self,
         path: &Path,
         cx: &mut Context<T>,
@@ -232,13 +303,8 @@ impl FileManager {
 
                     cx.spawn(async move |entity, cx| {
                         Timer::after(retry_delay).await;
-                        // We can't call try_start_watching from here because we don't have access to self
-                        // Instead, emit a retry event that the parent can handle
                         if let Err(error) = entity.update(cx, |_this, cx| {
-                            cx.emit(FileManagerEvent::WatchingFailed(
-                                path_clone,
-                                format!("Retrying file watching (attempt {})...", next_attempt + 1),
-                            ));
+                            cx.emit(FileManagerEvent::WatchingRetry(path_clone, next_attempt));
                         }) {
                             eprintln!("Failed to report file-watcher retry: {error:#}");
                         }
@@ -280,9 +346,11 @@ impl FileManager {
         let path_clone = path.to_path_buf();
         let debounce_duration = self.watcher_config.debounce_duration;
         let _reload_timeout = self.watcher_config.reload_timeout;
+        let watcher_generation = self.watcher_generation.clone();
+        let active_generation = watcher_generation.load(Ordering::Relaxed);
+        let background_executor = cx.background_executor().clone();
 
         cx.spawn(async move |entity, cx| {
-            let parser = create_sqlite_parser();
             let mut last_event_time: Option<Instant> = None;
             let mut consecutive_errors = 0u32;
             const MAX_CONSECUTIVE_ERRORS: u32 = 5;
@@ -313,8 +381,17 @@ impl FileManager {
                                 // Wait for debounce period to ensure file is fully written
                                 Timer::after(debounce_duration).await;
 
-                                // Parse file - use simple parsing for file watching
-                                let parse_result = parser.parse_file(&path_clone);
+                                let parse_path = path_clone.clone();
+                                let parse_result = background_executor
+                                    .spawn(async move {
+                                        create_sqlite_parser().parse_file(parse_path)
+                                    })
+                                    .await;
+                                if watcher_generation.load(Ordering::Relaxed)
+                                    != active_generation
+                                {
+                                    break;
+                                }
 
                                 match parse_result {
                                     Ok(database_info) => {
@@ -421,11 +498,13 @@ impl FileManager {
         if let Some(path) = &self.current_file {
             cx.emit(FileManagerEvent::WatchingStopped(path.clone()));
         }
+        self.watcher_generation.fetch_add(1, Ordering::Relaxed);
         self._watcher = None;
         self.watching_failed = false;
     }
 
     pub fn stop_watching_silent(&mut self) {
+        self.watcher_generation.fetch_add(1, Ordering::Relaxed);
         self._watcher = None;
         self.watching_failed = false;
     }
@@ -441,20 +520,6 @@ impl FileManager {
             self.open_file_with_progress(path, cx)
         } else {
             Task::ready(Err(anyhow::anyhow!("No file currently open")))
-        }
-    }
-
-    // Method to handle retry logic from external events
-    pub fn retry_watching<T>(&mut self, path: &Path, cx: &mut Context<T>) -> Result<()>
-    where
-        T: EventEmitter<FileManagerEvent> + 'static,
-    {
-        if !self.watching_failed {
-            self.start_watching(path, cx)
-        } else {
-            Err(anyhow::anyhow!(
-                "File watching has failed and cannot be retried"
-            ))
         }
     }
 

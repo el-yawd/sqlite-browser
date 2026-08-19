@@ -1,4 +1,6 @@
-use gpui::{App, Application, Bounds, WindowBounds, WindowOptions, actions, prelude::*, px, size};
+use gpui::{
+    App, Application, Bounds, KeyBinding, WindowBounds, WindowOptions, prelude::*, px, size,
+};
 use std::path::PathBuf;
 
 mod file_manager;
@@ -7,11 +9,14 @@ mod parser;
 mod ui;
 
 use ui::SqliteBrowser;
-
-actions!(sqlite_browser, [OpenFile, RefreshDatabase]);
+use ui::browser::{OpenFile, RefreshDatabase};
 
 fn main() {
     Application::new().run(|cx: &mut App| {
+        cx.bind_keys([
+            KeyBinding::new("ctrl-o", OpenFile, Some("SqliteBrowser")),
+            KeyBinding::new("ctrl-r", RefreshDatabase, Some("SqliteBrowser")),
+        ]);
         let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
         if let Err(error) = cx.open_window(
             WindowOptions {

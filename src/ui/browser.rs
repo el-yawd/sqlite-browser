@@ -2,13 +2,14 @@ use crate::file_manager::{FileManager, FileManagerEvent};
 use crate::models::{DatabaseInfo, PageInfo};
 
 use crate::ui::entities::{
-    FileDialogManager, FileOpenError, FileOpened, PageGrid, PageSelected, PageSidebar,
+    FileDialogManager, FileOpenError, FileOpened, FilePickerError, PageGrid, PageSelected,
+    PageSidebar,
 };
-use crate::ui::status_manager::{StatusAction, StatusManager};
+use crate::ui::status_manager::{StatusAction, StatusHost, StatusManager};
 use anyhow::Result;
 use gpui::{
-    Context, Entity, EventEmitter, FocusHandle, IntoElement, ParentElement, Render, Subscription,
-    Task, Window, actions, div, impl_actions, prelude::*, px,
+    Context, Entity, EventEmitter, FocusHandle, IntoElement, KeyDownEvent, ParentElement, Render,
+    Subscription, Task, Window, actions, div, impl_actions, prelude::*, px,
 };
 
 use std::collections::BTreeMap;
@@ -40,6 +41,12 @@ pub struct SqliteBrowser {
 }
 
 impl EventEmitter<FileManagerEvent> for SqliteBrowser {}
+
+impl StatusHost for SqliteBrowser {
+    fn status_manager(&mut self) -> &mut StatusManager {
+        &mut self.status_manager
+    }
+}
 
 impl SqliteBrowser {
     pub fn new(cx: &mut Context<Self>) -> Self {
@@ -75,6 +82,27 @@ impl SqliteBrowser {
             }
         });
 
+        let picker_error_subscription = cx.subscribe(&file_dialog, {
+            move |this, _entity, event: &FilePickerError, cx| {
+                this.status_manager.show_error(
+                    format!("Could not open the file picker: {}", event.error),
+                    cx,
+                );
+            }
+        });
+
+        let file_parse_subscription = cx.subscribe(&file_dialog, {
+            move |this, _entity, event: &FileManagerEvent, cx| match event {
+                FileManagerEvent::ParseStarted(_)
+                | FileManagerEvent::ParseProgress(_, _)
+                | FileManagerEvent::ParseCompleted(_)
+                | FileManagerEvent::ParseCancelled(_) => {
+                    this.handle_file_manager_event(event, cx);
+                }
+                _ => {}
+            }
+        });
+
         // Subscribe to FileManagerEvent emissions from this entity
         let file_manager_subscription = cx.subscribe(&cx.entity(), {
             move |this, _entity, event: &FileManagerEvent, cx| {
@@ -91,6 +119,8 @@ impl SqliteBrowser {
         browser._subscriptions.extend([
             file_opened_subscription,
             file_error_subscription,
+            picker_error_subscription,
+            file_parse_subscription,
             file_manager_subscription,
             page_selected_subscription,
         ]);
@@ -196,6 +226,16 @@ impl SqliteBrowser {
             .update(cx, |dialog, cx| dialog.open_file_dialog(cx))
     }
 
+    fn refresh_database(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = self.file_manager.current_file().map(PathBuf::from) else {
+            self.status_manager
+                .show_warning("No database is currently open".to_string(), cx);
+            return;
+        };
+
+        self.open_file(path, cx).detach();
+    }
+
     fn handle_file_manager_event(&mut self, event: &FileManagerEvent, cx: &mut Context<Self>) {
         match event {
             FileManagerEvent::FileOpened(path, database_info) => {
@@ -256,6 +296,11 @@ impl SqliteBrowser {
                     cx,
                 );
             }
+            FileManagerEvent::WatchingRetry(path, attempt) => {
+                if let Err(error) = self.file_manager.try_start_watching(path, cx, *attempt) {
+                    eprintln!("File-watcher retry failed: {error:#}");
+                }
+            }
             FileManagerEvent::WatchingFailed(path, error) => {
                 // Mark the file manager as failed and show error
                 self.file_manager.mark_watching_failed();
@@ -285,6 +330,7 @@ impl SqliteBrowser {
                 self.status_manager.dismiss_message(cx);
             }
             FileManagerEvent::ParseCancelled(path) => {
+                self.status_manager.dismiss_message(cx);
                 self.status_manager.show_info(
                     format!(
                         "Cancelled loading {}",
@@ -298,49 +344,139 @@ impl SqliteBrowser {
 }
 
 impl Render for SqliteBrowser {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div().flex().size_full().bg(gpui::rgb(0x1e1e1e)).child(
-            div()
-                .flex()
-                .flex_col()
-                .w_full()
-                .h_full()
-                .child(self.render_header_with_handlers(cx))
-                .when_some(self.status_manager.render(), |this, status_element| {
-                    this.child(self.render_status_with_handlers(status_element, cx))
-                })
-                .child(if self.database_info.is_some() {
-                    div()
-                        .flex()
-                        .flex_1()
-                        .child(div().flex_1().child(self.page_grid.clone()))
-                        .child(self.page_sidebar.clone())
-                        .into_any_element()
-                } else {
-                    div()
-                        .flex_1()
-                        .child(self.file_dialog.clone())
-                        .into_any_element()
-                }),
-        )
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if window.focused(cx).is_none() {
+            self.focus_handle.focus(window);
+        }
+
+        div()
+            .flex()
+            .size_full()
+            .track_focus(&self.focus_handle)
+            .key_context("SqliteBrowser")
+            .on_key_down(cx.listener(Self::handle_key_down))
+            .on_action(cx.listener(|this, _action: &OpenFile, _window, cx| {
+                this.open_file_dialog(cx).detach();
+            }))
+            .on_action(cx.listener(|this, _action: &RefreshDatabase, _window, cx| {
+                this.refresh_database(cx);
+            }))
+            .bg(gpui::rgb(0x1e1e1e))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .h_full()
+                    .child(self.render_header_with_handlers(cx))
+                    .when_some(self.status_manager.render(), |this, status_element| {
+                        this.child(self.render_status_with_handlers(status_element, cx))
+                    })
+                    .child(if self.database_info.is_some() {
+                        div()
+                            .flex()
+                            .flex_1()
+                            .min_h_0()
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .min_w_0()
+                                    .child(self.page_grid.clone()),
+                            )
+                            .child(self.page_sidebar.clone())
+                            .into_any_element()
+                    } else {
+                        div()
+                            .flex_1()
+                            .child(self.file_dialog.clone())
+                            .into_any_element()
+                    }),
+            )
     }
 }
 
 impl SqliteBrowser {
+    fn handle_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let offset = match event.keystroke.key.as_str() {
+            "left" => Some(-1),
+            "right" => Some(1),
+            "up" => Some(-8),
+            "down" => Some(8),
+            _ => None,
+        };
+        if let Some(offset) = offset {
+            self.page_grid.update(cx, |grid, cx| {
+                grid.select_relative(offset, cx);
+            });
+        }
+    }
+
     fn render_status_with_handlers(
         &self,
         status_element: impl IntoElement,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        // Add click handlers for dismiss and action buttons
-        div().child(status_element).on_mouse_down(
-            gpui::MouseButton::Left,
-            cx.listener(|this, _event, _window, cx| {
-                // For now, just dismiss the message when clicked anywhere
-                // In a real implementation, we'd need to check which element was clicked
-                this.status_manager.dismiss_message(cx);
-            }),
-        )
+        let dismissible = self
+            .status_manager
+            .current_message()
+            .is_some_and(|message| message.dismissible);
+        let action = self
+            .status_manager
+            .current_message()
+            .and_then(|message| message.action.clone());
+
+        div()
+            .flex()
+            .items_center()
+            .when(dismissible, |this| {
+                this.on_mouse_down(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, _event, _window, cx| {
+                        this.status_manager.dismiss_message(cx);
+                    }),
+                )
+            })
+            .child(div().flex_1().child(status_element))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .when_some(action, |this, action| {
+                        let handler_action = action.clone();
+                        this.child(
+                            div()
+                                .on_mouse_down(
+                                    gpui::MouseButton::Left,
+                                    cx.listener(move |this, _event, _window, cx| {
+                                        cx.stop_propagation();
+                                        this.handle_status_action(handler_action.clone(), cx);
+                                    }),
+                                )
+                                .child(self.status_manager.render_action_button(&action)),
+                        )
+                    })
+                    .when(dismissible, |this| {
+                        this.child(
+                            div()
+                                .on_mouse_down(
+                                    gpui::MouseButton::Left,
+                                    cx.listener(|this, _event, _window, cx| {
+                                        cx.stop_propagation();
+                                        this.status_manager.dismiss_message(cx);
+                                    }),
+                                )
+                                .child(self.status_manager.render_dismiss_button()),
+                        )
+                    }),
+            )
     }
 
     fn handle_status_action(&mut self, action: StatusAction, cx: &mut Context<Self>) {
@@ -368,15 +504,15 @@ impl SqliteBrowser {
     }
 
     pub fn cancel_current_operation(&mut self, cx: &mut Context<Self>) {
-        if self.file_manager.is_parsing() {
-            self.file_manager.cancel_current_parse();
-            self.status_manager
-                .show_info("Cancelling operation...".to_string(), cx);
+        if self.file_dialog.read(cx).is_parsing() {
+            self.file_dialog.update(cx, |dialog, _cx| {
+                dialog.cancel_current_parse();
+            });
         }
     }
 
-    pub fn is_operation_in_progress(&self) -> bool {
-        self.file_manager.is_parsing()
+    pub fn is_operation_in_progress(&self, cx: &Context<Self>) -> bool {
+        self.file_dialog.read(cx).is_parsing()
     }
 
     fn render_header_with_handlers(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -441,6 +577,31 @@ impl SqliteBrowser {
                                     .child("Open File"),
                             ),
                     )
+                    .when(self.current_file_path().is_some(), |this| {
+                        this.child(
+                            div()
+                                .debug_selector(|| "refresh-database".to_string())
+                                .px_3()
+                                .py_1()
+                                .bg(gpui::rgb(0x374151))
+                                .hover(|this| this.bg(gpui::rgb(0x4b5563)))
+                                .rounded_md()
+                                .cursor_pointer()
+                                .on_mouse_down(
+                                    gpui::MouseButton::Left,
+                                    cx.listener(|this, _event, _window, cx| {
+                                        this.refresh_database(cx);
+                                    }),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .text_color(gpui::rgb(0xffffff))
+                                        .child("Refresh"),
+                                ),
+                        )
+                    })
                     .child(
                         div()
                             .text_sm()
@@ -583,7 +744,6 @@ mod interaction_tests {
     }
 
     #[gpui::test]
-    #[ignore = "known issue: clicking a non-dismissible progress message dismisses it"]
     fn progress_status_cannot_be_dismissed_by_clicking_its_body(cx: &mut TestAppContext) {
         let (browser, cx) = cx.add_window_view(|_window, cx| SqliteBrowser::new(cx));
         browser.update(cx, |browser, cx| {
@@ -602,7 +762,6 @@ mod interaction_tests {
     }
 
     #[gpui::test]
-    #[ignore = "known issue: success and info messages never auto-dismiss"]
     fn success_status_auto_dismisses_after_three_seconds(cx: &mut TestAppContext) {
         let (browser, cx) = cx.add_window_view(|_window, cx| SqliteBrowser::new(cx));
         browser.update(cx, |browser, cx| {
@@ -611,6 +770,7 @@ mod interaction_tests {
                 .show_success("Database opened".to_string(), cx);
         });
 
+        cx.run_until_parked();
         cx.executor()
             .advance_clock(std::time::Duration::from_secs(4));
         cx.run_until_parked();
@@ -619,7 +779,6 @@ mod interaction_tests {
     }
 
     #[gpui::test]
-    #[ignore = "known issue: the page grid has no keyboard navigation"]
     fn right_arrow_selects_the_first_page(cx: &mut TestAppContext) {
         let (browser, cx) = cx.add_window_view(|_window, cx| SqliteBrowser::new(cx));
         install_database(&browser, database_with_page_count(2), cx);
@@ -635,7 +794,6 @@ mod interaction_tests {
     }
 
     #[gpui::test]
-    #[ignore = "known issue: overflow_hidden clips the page grid instead of scrolling it"]
     fn scrolling_moves_later_pages_into_view(cx: &mut TestAppContext) {
         let (browser, cx) = cx.add_window_view(|_window, cx| SqliteBrowser::new(cx));
         install_database(&browser, database_with_page_count(200), cx);

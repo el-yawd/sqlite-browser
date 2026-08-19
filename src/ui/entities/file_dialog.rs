@@ -1,4 +1,4 @@
-use crate::file_manager::{FileManager, FileManagerEvent};
+use crate::file_manager::{FileManager, FileManagerEvent, ParseOperationError};
 use crate::models::DatabaseInfo;
 use anyhow::Result;
 use gpui::{
@@ -6,6 +6,21 @@ use gpui::{
 };
 use rfd::FileDialog;
 use std::{path::PathBuf, sync::Arc};
+
+pub trait FilePicker: Send + Sync {
+    fn pick_file(&self) -> Result<Option<PathBuf>>;
+}
+
+struct NativeFilePicker;
+
+impl FilePicker for NativeFilePicker {
+    fn pick_file(&self) -> Result<Option<PathBuf>> {
+        Ok(FileDialog::new()
+            .add_filter("SQLite Database", &["db", "sqlite", "sqlite3"])
+            .set_title("Open SQLite Database")
+            .pick_file())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct FileOpenRequested {
@@ -25,6 +40,11 @@ pub struct FileOpenError {
 }
 
 #[derive(Clone, Debug)]
+pub struct FilePickerError {
+    pub error: String,
+}
+
+#[derive(Clone, Debug)]
 pub enum FileDialogState {
     Idle,
     ShowingDialog,
@@ -35,11 +55,14 @@ pub enum FileDialogState {
 pub struct FileDialogManager {
     file_manager: FileManager,
     state: FileDialogState,
+    load_generation: u64,
+    file_picker: Arc<dyn FilePicker>,
 }
 
 impl EventEmitter<FileOpenRequested> for FileDialogManager {}
 impl EventEmitter<FileOpened> for FileDialogManager {}
 impl EventEmitter<FileOpenError> for FileDialogManager {}
+impl EventEmitter<FilePickerError> for FileDialogManager {}
 impl EventEmitter<FileManagerEvent> for FileDialogManager {}
 
 impl FileDialogManager {
@@ -47,6 +70,17 @@ impl FileDialogManager {
         Self {
             file_manager: FileManager::new(),
             state: FileDialogState::Idle,
+            load_generation: 0,
+            file_picker: Arc::new(NativeFilePicker),
+        }
+    }
+
+    pub fn with_file_picker(file_picker: Arc<dyn FilePicker>) -> Self {
+        Self {
+            file_manager: FileManager::new(),
+            state: FileDialogState::Idle,
+            load_generation: 0,
+            file_picker,
         }
     }
 
@@ -54,26 +88,41 @@ impl FileDialogManager {
         self.state = FileDialogState::ShowingDialog;
         cx.notify();
 
+        let file_picker = self.file_picker.clone();
+        let pick_task = cx
+            .background_executor()
+            .spawn(async move { file_picker.pick_file() });
         cx.spawn(async move |entity, cx| {
-            let file_dialog = FileDialog::new()
-                .add_filter("SQLite Database", &["db", "sqlite", "sqlite3"])
-                .set_title("Open SQLite Database");
-
-            if let Some(file_path) = file_dialog.pick_file() {
-                entity.update(cx, |this, cx| {
-                    this.open_file(file_path, cx).detach();
-                })?;
-            } else {
-                entity.update(cx, |this, cx| {
-                    this.state = FileDialogState::Idle;
-                    cx.notify();
-                })?;
+            match pick_task.await {
+                Ok(Some(file_path)) => {
+                    entity.update(cx, |this, cx| {
+                        this.open_file(file_path, cx).detach();
+                    })?;
+                }
+                Ok(None) => {
+                    entity.update(cx, |this, cx| {
+                        this.state = FileDialogState::Idle;
+                        cx.notify();
+                    })?;
+                }
+                Err(error) => {
+                    entity.update(cx, |this, cx| {
+                        this.state = FileDialogState::Error(error.to_string());
+                        cx.emit(FilePickerError {
+                            error: error.to_string(),
+                        });
+                        cx.notify();
+                    })?;
+                    return Err(error);
+                }
             }
             Ok(())
         })
     }
 
     pub fn open_file(&mut self, path: PathBuf, cx: &mut Context<Self>) -> Task<Result<()>> {
+        self.load_generation = self.load_generation.wrapping_add(1);
+        let load_generation = self.load_generation;
         self.state = FileDialogState::Loading(path.clone());
         cx.notify();
 
@@ -82,31 +131,59 @@ impl FileDialogManager {
 
         let parse_task = self.file_manager.open_file(path.clone(), cx);
 
-        cx.spawn(async move |entity, cx| match parse_task.await {
-            Ok(database_info) => {
-                entity.update(cx, |this, cx| {
-                    this.file_manager.set_current_file(Some(path.clone()));
-                    this.state = FileDialogState::Idle;
-                    cx.emit(FileOpened {
-                        path: path.clone(),
-                        database_info: database_info.clone(),
-                    });
-                    cx.notify();
-                })?;
-                Ok(())
-            }
-            Err(e) => {
-                entity.update(cx, |this, cx| {
-                    this.state = FileDialogState::Error(e.to_string());
-                    cx.emit(FileOpenError {
-                        path: path.clone(),
-                        error: e.to_string(),
-                    });
-                    cx.notify();
-                })?;
-                Err(e)
-            }
+        cx.spawn(async move |entity, cx| {
+            let result = parse_task.await;
+            entity.update(cx, |this, cx| {
+                if this.load_generation != load_generation {
+                    return Ok(());
+                }
+
+                match result {
+                    Ok(database_info) => {
+                        this.file_manager.set_current_file(Some(path.clone()));
+                        this.state = FileDialogState::Idle;
+                        cx.emit(FileOpened {
+                            path: path.clone(),
+                            database_info,
+                        });
+                        cx.notify();
+                        Ok(())
+                    }
+                    Err(error)
+                        if error
+                            .downcast_ref::<ParseOperationError>()
+                            .is_some_and(|error| {
+                                matches!(
+                                    error,
+                                    ParseOperationError::Cancelled
+                                        | ParseOperationError::Superseded
+                                )
+                            }) =>
+                    {
+                        this.state = FileDialogState::Idle;
+                        cx.notify();
+                        Ok(())
+                    }
+                    Err(error) => {
+                        this.state = FileDialogState::Error(error.to_string());
+                        cx.emit(FileOpenError {
+                            path: path.clone(),
+                            error: error.to_string(),
+                        });
+                        cx.notify();
+                        Err(error)
+                    }
+                }
+            })?
         })
+    }
+
+    pub fn cancel_current_parse(&mut self) {
+        self.file_manager.cancel_current_parse();
+    }
+
+    pub fn is_parsing(&self) -> bool {
+        self.file_manager.is_parsing()
     }
 
     pub fn try_open_file_or_dialog(
@@ -285,6 +362,14 @@ mod interaction_tests {
     use super::*;
     use gpui::{Modifiers, TestAppContext};
 
+    struct CancelledFilePicker;
+
+    impl FilePicker for CancelledFilePicker {
+        fn pick_file(&self) -> Result<Option<PathBuf>> {
+            Ok(None)
+        }
+    }
+
     #[gpui::test]
     fn dismissing_an_error_returns_to_the_open_state(cx: &mut TestAppContext) {
         let (dialog, cx) = cx.add_window_view(|_window, _cx| FileDialogManager::new());
@@ -301,5 +386,17 @@ mod interaction_tests {
 
         assert!(cx.read(|cx| matches!(dialog.read(cx).state(), FileDialogState::Idle)));
         assert!(cx.debug_bounds("file-dialog-open").is_some());
+    }
+
+    #[gpui::test]
+    async fn cancelling_the_native_picker_returns_to_idle(cx: &mut TestAppContext) {
+        let dialog =
+            cx.new(|_cx| FileDialogManager::with_file_picker(Arc::new(CancelledFilePicker)));
+
+        let task = dialog.update(cx, |dialog, cx| dialog.open_file_dialog(cx));
+        task.await
+            .expect("cancelling file selection should succeed");
+
+        assert!(cx.read(|cx| matches!(dialog.read(cx).state(), FileDialogState::Idle)));
     }
 }
